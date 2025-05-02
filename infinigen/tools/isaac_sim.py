@@ -9,12 +9,15 @@ import json
 
 import numpy as np
 import omni
+import isaacsim
+from omni.isaac.kit import SimulationApp
+CONFIG = {"renderer": "RayTracedLighting", "headless": False}
+simulation_app = SimulationApp(launch_config=CONFIG)
 from omni.isaac.core import World
 from omni.isaac.core.prims import XFormPrim
 from omni.isaac.core.utils.extensions import enable_extension
 from omni.isaac.core.utils.nucleus import get_assets_root_path
 from omni.isaac.core.utils.prims import create_prim
-from omni.isaac.kit import SimulationApp
 from omni.kit.commands import execute as omni_exec
 from pxr import Sdf, Usd, UsdGeom, UsdLux
 
@@ -25,8 +28,6 @@ from omni.isaac.core.utils.types import ArticulationAction
 from omni.isaac.wheeled_robots.robots import WheeledRobot
 from omni.physx.scripts import utils
 
-CONFIG = {"renderer": "RayTracedLighting", "headless": False}
-simulation_app = SimulationApp(launch_config=CONFIG)
 
 
 class RobotController(BaseController):
@@ -133,7 +134,7 @@ class InfinigenIsaacScene(object):
 
     def _get_camera_loc(self):
         stage = omni.usd.get_context().get_stage()
-        prim = stage.GetPrimAtPath("/World/Support/CameraRigs_0_0")
+        prim = stage.GetPrimAtPath("/World/Support/camera_0_0")
         xform = UsdGeom.Xformable(prim)
         transform_matrix = xform.ComputeLocalToWorldTransform(Usd.TimeCode.Default())
         translation = transform_matrix.ExtractTranslation()

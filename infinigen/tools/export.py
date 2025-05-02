@@ -631,7 +631,9 @@ def adjust_wattages():
                 new_wattage = (
                     (X * 20 / (4 * math.pi)) * 1000 / (4 * math.pi * r**2) * 100
                 )
-                light.energy = new_wattage
+                # light.energy = new_wattage
+                # light.energy = new_wattage / 10
+                light.energy = new_wattage / 1000
 
 
 def set_center_of_mass():
@@ -986,7 +988,7 @@ def main(args):
         if blendfile.stem == "solve_state":
             shutil.copy(blendfile, args.output_folder / "solve_state.json")
 
-        if not blendfile.suffix == ".blend":
+        if not blendfile.suffix == ".blend" or blendfile.is_dir():
             print(f"Skipping non-blend file {blendfile}")
             continue
 

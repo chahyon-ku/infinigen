@@ -97,7 +97,7 @@ def import_material(factory_name):
         try:
             return importlib.import_module(f"infinigen.assets.materials.{factory_name}")
         except ImportError:
-            for subdir in os.listdir("infinigen/assets/materials"):
+            for subdir in os.listdir("third_party/infinigen/infinigen/assets/materials"):
                 if not subdir.endswith(".py"):
                     with gin.unlock_config():
                         module = importlib.import_module(
