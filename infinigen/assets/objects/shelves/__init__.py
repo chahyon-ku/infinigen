@@ -8,3 +8,4 @@ from .simple_bookcase import SimpleBookcaseFactory
 from .simple_desk import SidetableDeskFactory, SimpleDeskFactory
 from .single_cabinet import SingleCabinetFactory
 from .triangle_shelf import TriangleShelfFactory
+from .single_cabinet_articulated import SingleCabinetArticulatedFactory

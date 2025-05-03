@@ -632,8 +632,8 @@ def adjust_wattages():
                     (X * 20 / (4 * math.pi)) * 1000 / (4 * math.pi * r**2) * 100
                 )
                 # light.energy = new_wattage
-                # light.energy = new_wattage / 10
-                light.energy = new_wattage / 1000
+                light.energy = new_wattage / 100
+                # light.energy = new_wattage / 1000
 
 
 def set_center_of_mass():
@@ -944,6 +944,8 @@ def export_curr_scene(
             if obj.type == "MESH" and len(obj.data.polygons) == 0:
                 logging.info(f"{obj.name} has no faces, removing...")
                 bpy.data.objects.remove(obj, do_unlink=True)
+            if obj.type == 'CAMERA':
+                obj.data.sensor_width = 107
 
     if individual_export:
         bpy.ops.object.select_all(action="SELECT")
