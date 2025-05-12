@@ -11,13 +11,42 @@ from infinigen.assets.objects.shelves.doors import CabinetDoorBaseFactory
 from infinigen.assets.objects.shelves.large_shelf import LargeShelfBaseFactory
 from infinigen.assets.utils.object import new_bbox
 from infinigen.core import surface, tagging
-from infinigen.core.nodes.node_wrangler import Nodes, NodeWrangler, geometry_node_group_empty_new, ng_inputs, ng_outputs
+from infinigen.core.nodes.node_wrangler import Nodes, NodeWrangler
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util import blender as butil
 from infinigen.core.util.math import FixedSeed
 
 
 def geometry_cabinet_nodes(nw: NodeWrangler, **kwargs):
+    # Code generated using version 2.6.4 of the node_transpiler
+    right_door_info = nw.new_node(
+        Nodes.ObjectInfo, input_kwargs={"Object": kwargs["door"][0]}
+    )
+    left_door_info = nw.new_node(
+        Nodes.ObjectInfo, input_kwargs={"Object": kwargs["door"][1]}
+    )
+    shelf_info = nw.new_node(Nodes.ObjectInfo, input_kwargs={"Object": kwargs["shelf"]})
+
+    doors = []
+    transform_r = nw.new_node(
+        Nodes.Transform,
+        input_kwargs={
+            "Geometry": right_door_info.outputs["Geometry"],
+            "Translation": kwargs["door_hinge_pos"][0],
+            "Rotation": (0, 0, kwargs["door_open_angle"]),
+        },
+    )
+    doors.append(transform_r)
+    if len(kwargs["door_hinge_pos"]) > 1:
+        transform_l = nw.new_node(
+            Nodes.Transform,
+            input_kwargs={
+                "Geometry": left_door_info.outputs["Geometry"],
+                "Translation": kwargs["door_hinge_pos"][1],
+                "Rotation": (0, 0, kwargs["door_open_angle"]),
+            },
+        )
+        doors.append(transform_l)
 
     attaches = []
     for pos in kwargs["attach_pos"]:
@@ -65,27 +94,16 @@ def geometry_cabinet_nodes(nw: NodeWrangler, **kwargs):
         Nodes.JoinGeometry, input_kwargs={"Geometry": attaches}
     )
 
+    join_geometry = nw.new_node(
+        Nodes.JoinGeometry, input_kwargs={"Geometry": doors + [join_geometry_a]}
+    )
+
     group_output = nw.new_node(
         Nodes.GroupOutput,
-        input_kwargs={"Geometry": join_geometry_a},
+        input_kwargs={"Geometry": join_geometry},
         attrs={"is_active_output": True},
     )
 
-
-def remove_nonprimitive_from_dict(d):
-    if isinstance(d, dict):
-        return {k: remove_nonprimitive_from_dict(v) for k, v in d.items()}
-    elif isinstance(d, list):
-        return [remove_nonprimitive_from_dict(v) for v in d]
-    # elif d == True or d == False:
-    #     return "True" if d else "False"
-    elif isinstance(d, np.bool_):
-        return True if d else False
-    elif hasattr(d, '__call__'):
-        return None
-    else:
-        return d
-    
 
 class SingleCabinetBaseFactory(AssetFactory):
     def __init__(self, factory_seed, params={}, coarse=False):
@@ -178,7 +196,7 @@ class SingleCabinetBaseFactory(AssetFactory):
                     self.shelf_params["bottom_board_height"],
                 )
             ]
-            params["door_open_angle"] = np.pi / 2
+            params["door_open_angle"] = 0
             params["attach_pos"] = [
                 (
                     self.shelf_params["shelf_depth"] / 2.0,
@@ -200,7 +218,7 @@ class SingleCabinetBaseFactory(AssetFactory):
                     self.shelf_params["bottom_board_height"],
                 ),
             ]
-            params["door_open_angle"] = np.pi / 2
+            params["door_open_angle"] = 0
             params["attach_pos"] = [
                 (
                     self.shelf_params["shelf_depth"] / 2.0,
@@ -266,33 +284,18 @@ class SingleCabinetBaseFactory(AssetFactory):
             attributes=[],
             apply=True,
             input_kwargs={
-                "door": [],
+                "door": [right_door, left_door],
                 "shelf": shelf,
                 "door_hinge_pos": cabinet_params["door_hinge_pos"],
                 "door_open_angle": cabinet_params["door_open_angle"],
                 "attach_pos": cabinet_params["attach_pos"],
             },
         )
+        butil.delete([left_door, right_door])
         obj = butil.join_objects([shelf, obj])
-        obj.name = f"{repr(self)}.spawn_asset({i})"
-        right_door.location = cabinet_params["door_hinge_pos"][0]
-        right_door.rotation_euler = (0, 0, -cabinet_params["door_open_angle"])
-        right_door.name = f"{obj.name}.right"
-        if len(cabinet_params["door_hinge_pos"]) > 1:
-            left_door.location = cabinet_params["door_hinge_pos"][1]
-            left_door.rotation_euler = (0, 0, cabinet_params["door_open_angle"])
-            left_door.name = f"{obj.name}.left"
-        else:
-            butil.delete([left_door])
 
         tagging.tag_system.relabel_obj(obj)
         return obj
-    
-    def get_all_params(self):
-        return remove_nonprimitive_from_dict({
-            'shelf': self.shelf_fac.params.copy(),
-            'door': self.door_fac.params.copy(),
-        })
 
 
 class SingleCabinetFactory(SingleCabinetBaseFactory):

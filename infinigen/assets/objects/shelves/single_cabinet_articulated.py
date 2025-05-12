@@ -18,7 +18,6 @@ from infinigen.core.util.math import FixedSeed
 
 
 def geometry_cabinet_nodes(nw: NodeWrangler, **kwargs):
-    shelf_info = nw.new_node(Nodes.ObjectInfo, input_kwargs={"Object": kwargs["shelf"]})
 
     attaches = []
     for pos in kwargs["attach_pos"]:
@@ -68,10 +67,25 @@ def geometry_cabinet_nodes(nw: NodeWrangler, **kwargs):
 
     group_output = nw.new_node(
         Nodes.GroupOutput,
-        input_kwargs={"Geometry": join_geometry},
+        input_kwargs={"Geometry": join_geometry_a},
         attrs={"is_active_output": True},
     )
 
+
+def remove_nonprimitive_from_dict(d):
+    if isinstance(d, dict):
+        return {k: remove_nonprimitive_from_dict(v) for k, v in d.items()}
+    elif isinstance(d, list):
+        return [remove_nonprimitive_from_dict(v) for v in d]
+    # elif d == True or d == False:
+    #     return "True" if d else "False"
+    elif isinstance(d, np.bool_):
+        return True if d else False
+    elif hasattr(d, '__call__'):
+        return None
+    else:
+        return d
+    
 
 class SingleCabinetBaseFactory(AssetFactory):
     def __init__(self, factory_seed, params={}, coarse=False):
@@ -244,6 +258,7 @@ class SingleCabinetBaseFactory(AssetFactory):
 
         shelf, right_door, left_door = self.get_cabinet_components(i=i)
 
+        # create cabinet
         cabinet_params = self.get_cabinet_params(i=i)
         surface.add_geomod(
             obj,
@@ -259,16 +274,25 @@ class SingleCabinetBaseFactory(AssetFactory):
             },
         )
         obj = butil.join_objects([shelf, obj])
+        obj.name = f"{repr(self)}.spawn_asset({i})"
         right_door.location = cabinet_params["door_hinge_pos"][0]
         right_door.rotation_euler = (0, 0, -cabinet_params["door_open_angle"])
+        right_door.name = obj.name + '.' + right_door.name
         if len(cabinet_params["door_hinge_pos"]) > 1:
             left_door.location = cabinet_params["door_hinge_pos"][1]
             left_door.rotation_euler = (0, 0, cabinet_params["door_open_angle"])
+            left_door.name = obj.name + '.' + left_door.name
         else:
             butil.delete([left_door])
 
         tagging.tag_system.relabel_obj(obj)
         return obj
+    
+    def get_all_params(self):
+        return remove_nonprimitive_from_dict({
+            'shelf': self.shelf_fac.params.copy(),
+            'door': self.door_fac.params.copy(),
+        })
 
 
 class SingleCabinetArticulatedFactory(SingleCabinetBaseFactory):
