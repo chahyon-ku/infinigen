@@ -941,11 +941,11 @@ def export_curr_scene(
         set_center_of_mass()
         # remove 0 polygon meshes
         for obj in bpy.data.objects:
+            if obj.type == 'CAMERA':
+                obj.data.sensor_width = 107
             if obj.type == "MESH" and len(obj.data.polygons) == 0:
                 logging.info(f"{obj.name} has no faces, removing...")
                 bpy.data.objects.remove(obj, do_unlink=True)
-            if obj.type == 'CAMERA':
-                obj.data.sensor_width = 107
 
     if individual_export:
         bpy.ops.object.select_all(action="SELECT")
