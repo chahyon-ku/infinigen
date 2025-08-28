@@ -3,7 +3,9 @@
 
 # Authors: Lingjie Mei
 import bpy
+import gin
 import numpy as np
+from numpy.random import normal, randint, uniform
 
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util import blender as butil

@@ -14,12 +14,11 @@ from mathutils import Vector
 from numpy.random import uniform
 
 from infinigen.assets.fluid import duplication_geomod
-from infinigen.assets.materials import (
-    blackbody_shader,
+from infinigen.assets.materials.fluid import (
+    blackbody,
     lava,
-    smoke_material,
+    smoke,
     water,
-    waterfall_material,
 )
 from infinigen.core.init import require_blender_addon
 from infinigen.core.nodes.node_wrangler import (
@@ -41,6 +40,7 @@ require_blender_addon("antlandscape", fail="warn")
 def check_initalize_fluids():
     if FLUID_INITIALIZED:
         return
+    bpy.ops.preferences.addon_enable(module="flip_fluids_addon")
     bpy.ops.flip_fluid_operators.complete_installation()
 
 
@@ -131,7 +131,7 @@ def create_liquid_domain(
 
     if fluid_type == "water":
         if waterfall:
-            waterfall_material.apply(obj)
+            waterfall.apply(obj)
             settings.use_spray_particles = True
             settings.use_foam_particles = True
             settings.use_bubble_particles = True
@@ -198,7 +198,6 @@ def make_liquid_effector(obj):
 
 @gin.configurable
 def add_field(location, noise=None, strength=None):
-    check_initalize_fluids()
     logger.info("adding field")
     bpy.ops.object.select_all(action="DESELECT")
     field = bpy.data.objects.new("turbulence", None)
@@ -239,7 +238,6 @@ def create_gas_domain(
     flame_vorticity=None,
     vorticity=None,
 ):
-    check_initalize_fluids()
     bpy.ops.mesh.primitive_cube_add(size=size, location=location)
     obj = bpy.context.object
     set_gas_domain_settings(
@@ -274,7 +272,6 @@ def set_gas_domain_settings(
     flame_vorticity=None,
     vorticity=None,
 ):
-    check_initalize_fluids()
     if "Fluid" not in obj.modifiers:
         mod = obj.modifiers.new("Fluid", type="FLUID")
     else:
@@ -325,9 +322,9 @@ def set_gas_domain_settings(
         else:
             settings.flame_vorticity = uniform(0.45, 0.55)
         settings.burning_rate = uniform(0.50, 0.80)
-        blackbody_shader.apply(obj)
+        blackbody.apply(obj)
     elif fluid_type == "smoke":
-        smoke_material.apply(obj)
+        smoke.apply(obj)
         settings.alpha = 1.0
     elif fluid_type == "fire":
         if flame_vorticity:
@@ -335,7 +332,7 @@ def set_gas_domain_settings(
         else:
             settings.flame_vorticity = uniform(0.45, 0.55)
         settings.burning_rate = uniform(0.50, 0.80)
-        blackbody_shader.apply(obj)
+        blackbody.apply(obj)
     else:
         raise ValueError
 
@@ -344,8 +341,6 @@ def set_gas_domain_settings(
 
 @gin.configurable
 def create_gas_flow(location, fluid_type="fire_and_smoke", size=0.1, fuel_amount=None):
-    check_initalize_fluids()
-
     bpy.ops.mesh.primitive_ico_sphere_add(radius=size, location=location)
     obj = bpy.context.object
     mod = obj.modifiers.new("Fluid", type="FLUID")
@@ -374,8 +369,6 @@ def create_gas_flow(location, fluid_type="fire_and_smoke", size=0.1, fuel_amount
 
 @gin.configurable
 def set_gas_flow_settings(obj, fluid_type="fire_and_smoke", fuel_amount=None):
-    check_initalize_fluids()
-
     if "Fluid" not in obj.modifiers:
         mod = obj.modifiers.new("Fluid", type="FLUID")
     else:
@@ -543,8 +536,6 @@ def set_obj_on_fire(
     dissolve_speed=25,
     dom_scale=1,
 ):
-    check_initalize_fluids()
-
     dissolve_speed += np.random.randint(-3, 4)
     if add_turbulence:
         add_field(
@@ -767,8 +758,6 @@ def find_root(node):
 def set_fire_to_assets(
     assets, start_frame, simulation_duration, output_folder=None, max_fire_assets=1
 ):
-    check_initalize_fluids()
-
     if len(assets) == 0:
         return
 
@@ -813,8 +802,6 @@ def duplicate_fluid_obj(obj):
 
 @gin.configurable
 def estimate_smoke_domain(obj, start_frame, simulation_duration):
-    check_initalize_fluids()
-
     bpy.ops.object.select_all(action="DESELECT")
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)

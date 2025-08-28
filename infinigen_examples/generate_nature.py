@@ -21,26 +21,10 @@ logging.basicConfig(
     level=logging.INFO,
 )
 
+
 # unused imports required for gin to find modules currently, # TODO remove
 # ruff: noqa: F401
 from infinigen.assets import fluid, lighting, weather
-from infinigen.assets.materials import (
-    atmosphere_light_haze,
-    chunkyrock,
-    cobble_stone,
-    cracked_ground,
-    dirt,
-    ice,
-    lava,
-    mountain,
-    mud,
-    sand,
-    sandstone,
-    snow,
-    soil,
-    stone,
-    water,
-)
 from infinigen.assets.objects import (
     cactus,
     cloud,
@@ -78,18 +62,22 @@ from infinigen.assets.scatters import (
 from infinigen.assets.scatters.utils.selection import scatter_lower, scatter_upward
 from infinigen.core import execute_tasks, init, surface
 from infinigen.core.placement import camera as cam_util
+from infinigen.core.placement import camera_trajectories as cam_traj
 from infinigen.core.placement import density, placement, split_in_view
 from infinigen.core.util import blender as butil
 from infinigen.core.util import logging as logging_util
 from infinigen.core.util import pipeline
 from infinigen.core.util.imu import save_imu_tum_files
 from infinigen.core.util.math import FixedSeed, int_hash
-from infinigen.core.util.organization import Tags, Task
+from infinigen.core.util.organization import Tags
 from infinigen.core.util.pipeline import RandomStageExecutor
-from infinigen.core.util.random import random_general, sample_registry
-from infinigen.terrain import Terrain
+from infinigen.core.util.random import random_general, weighted_sample
+from infinigen.terrain.core import Terrain
 
 logger = logging.getLogger(__name__)
+
+
+from infinigen.core.util import rrt
 
 
 @gin.configurable
@@ -99,7 +87,6 @@ def compose_nature(output_folder, scene_seed, **params):
     def add_coarse_terrain():
         terrain = Terrain(
             scene_seed,
-            surface.registry,
             task="coarse",
             on_the_fly_asset_folder=output_folder / "assets",
         )
@@ -283,17 +270,19 @@ def compose_nature(output_folder, scene_seed, **params):
         if terrain is not None
         else butil.bounds(terrain_mesh)
     )
-    p.run_stage(
-        "pose_cameras",
-        lambda: cam_util.configure_cameras(
-            camera_rigs,
-            scene_preprocessed,
+
+    primary_cams = [rig.children[0] for rig in camera_rigs]
+
+    def pose_cameras():
+        poses = cam_traj.compute_poses(
+            cam_rigs=camera_rigs,
+            scene_preprocessed=scene_preprocessed,
             init_bounding_box=bbox,
             terrain_mesh=terrain_mesh,
-        ),
-        use_chance=False,
-    )
-    primary_cams = [rig.children[0] for rig in camera_rigs]
+        )
+        return poses
+
+    poses = p.run_stage("pose_cameras", pose_cameras, use_chance=False)
 
     p.run_stage(
         "lighting",
@@ -321,7 +310,7 @@ def compose_nature(output_folder, scene_seed, **params):
     pois = []  # objects / points of interest, for the camera to look at
 
     def add_ground_creatures(target):
-        fac_class = sample_registry(params["ground_creature_registry"])
+        fac_class = weighted_sample(params["ground_creature_registry"])
         fac = fac_class(int_hash((scene_seed, 0)), bvh=scene_bvh, animation_mode="idle")
         n = params.get("max_ground_creatures", randint(1, 4))
         selection = (
@@ -346,7 +335,7 @@ def compose_nature(output_folder, scene_seed, **params):
     )
 
     def flying_creatures():
-        fac_class = sample_registry(params["flying_creature_registry"])
+        fac_class = weighted_sample(params["flying_creature_registry"])
         fac = fac_class(randint(1e7), bvh=scene_bvh, animation_mode="idle")
         n = params.get("max_flying_creatures", randint(2, 7))
         col = placement.scatter_placeholders_mesh(
@@ -357,11 +346,40 @@ def compose_nature(output_folder, scene_seed, **params):
     pois += p.run_stage("flying_creatures", flying_creatures, default=[])
 
     def animate_cameras():
-        cam_util.animate_cameras(camera_rigs, bbox, scene_preprocessed, pois=pois)
-
+        hidden_cols = [c for c in bpy.data.collections if c.hide_viewport]
+        hidden_objs = [o for o in bpy.context.scene.objects if o.hide_viewport]
+        for o in hidden_objs:
+            o.hide_viewport = False
+        for c in hidden_cols:
+            c.hide_viewport = False
+        objs = [
+            obj
+            for obj in bpy.context.scene.objects
+            if obj.type == "MESH"
+            and not obj.hide_render
+            and "atmosphere" not in obj.name
+        ]
+        cam_traj.animate_trajectories(
+            cam_rigs=camera_rigs,
+            base_views=poses,
+            scene_preprocessed=scene_preprocessed,
+            obj_groups=[objs],
+            pois=pois,
+        )
+        for o in hidden_objs:
+            o.hide_viewport = True
+        for c in hidden_cols:
+            c.hide_viewport = True
         frames_folder = output_folder.parent / "frames"
         animated_cams = [cam for cam in camera_rigs if cam.animation_data is not None]
-        save_imu_tum_files(frames_folder / "imu_tum", animated_cams)
+
+        save_imu_tum_data = params.get("save_imu_tum_data")
+        if save_imu_tum_data:
+            frames_folder = output_folder.parent / "frames"
+            animated_cams = [
+                cam for cam in camera_rigs if cam.animation_data is not None
+            ]
+            save_imu_tum_files(frames_folder / "imu_tum", animated_cams)
 
     p.run_stage(
         "animate_cameras",
@@ -454,7 +472,8 @@ def compose_nature(output_folder, scene_seed, **params):
             return_scalar=True,
             tag=nonliving_domain,
         )
-        _, rock_col = pebbles.apply(target, selection=selection)
+        # _, rock_col = pebbles.apply(target, selection=selection)
+        _, rock_col = pebbles.Pebbles().apply(target, selection=selection)
         return rock_col
 
     p.run_stage("rocks", add_rocks, terrain_inview)
@@ -467,7 +486,8 @@ def compose_nature(output_folder, scene_seed, **params):
             return_scalar=True,
             tag=land_domain,
         )
-        ground_leaves.apply(target, selection=selection, season=season)
+        # ground_leaves.apply(target, selection=selection, season=season)
+        ground_leaves.GroundLeaves().apply(target, selection=selection, season=season)
 
     p.run_stage("ground_leaves", add_ground_leaves, terrain_near, prereq="trees")
 
@@ -480,7 +500,10 @@ def compose_nature(output_folder, scene_seed, **params):
             return_scalar=True,
             tag=nonliving_domain,
         )
-        ground_twigs.apply(target, selection=selection, use_leaves=use_leaves)
+        # ground_twigs.apply(target, selection=selection, use_leaves=use_leaves)
+        ground_twigs.GroundTwigs().apply(
+            target, selection=selection, use_leaves=use_leaves
+        )
 
     p.run_stage("ground_twigs", add_ground_twigs, terrain_near)
 
@@ -492,7 +515,8 @@ def compose_nature(output_folder, scene_seed, **params):
             return_scalar=True,
             tag=nonliving_domain,
         )
-        chopped_trees.apply(target, selection=selection)
+        # chopped_trees.apply(target, selection=selection)
+        chopped_trees.ChoppedTrees().apply(target, selection=selection)
 
     p.run_stage("chopped_trees", add_chopped_trees, terrain_inview)
 
@@ -505,7 +529,8 @@ def compose_nature(output_folder, scene_seed, **params):
             return_scalar=True,
             select_thresh=uniform(select_max / 2, select_max),
         )
-        grass.apply(target, selection=selection)
+        # grass.apply(target, selection=selection)
+        grass.Grass().apply(target, selection=selection)
 
     p.run_stage("grass", add_grass, terrain_inview)
 
@@ -513,7 +538,8 @@ def compose_nature(output_folder, scene_seed, **params):
         selection = density.placement_mask(
             normal_dir=(0, 0, 1), scale=0.2, tag=land_domain
         )
-        monocots.apply(terrain_inview, grass=True, selection=selection)
+        # monocots.apply(terrain_inview, grass=True, selection=selection)
+        monocots.Monocots().apply(terrain_inview, grass=True, selection=selection)
         selection = density.placement_mask(
             normal_dir=(0, 0, 1),
             scale=0.2,
@@ -532,7 +558,8 @@ def compose_nature(output_folder, scene_seed, **params):
             return_scalar=True,
             tag=land_domain,
         )
-        fern.apply(target, selection=selection)
+        # fern.apply(target, selection=selection)
+        fern.Fern().apply(target, selection=selection)
 
     p.run_stage("ferns", add_ferns, terrain_inview)
 
@@ -544,7 +571,8 @@ def compose_nature(output_folder, scene_seed, **params):
             return_scalar=True,
             tag=land_domain,
         )
-        flowerplant.apply(target, selection=selection)
+        # flowerplant.apply(target, selection=selection)
+        flowerplant.Flowerplant().apply(target, selection=selection)
 
     p.run_stage("flowers", add_flowers, terrain_inview)
 
@@ -552,7 +580,13 @@ def compose_nature(output_folder, scene_seed, **params):
         vertical_faces = density.placement_mask(
             scale=0.15, select_thresh=uniform(0.44, 0.48)
         )
-        coral_reef.apply(
+        # coral_reef.apply(
+        #     target,
+        #     selection=vertical_faces,
+        #     tag=underwater_domain,
+        #     density=params.get("coral_density", 2.5),
+        # )
+        coral_reef.CoralReef().apply(
             target,
             selection=vertical_faces,
             tag=underwater_domain,
@@ -561,7 +595,15 @@ def compose_nature(output_folder, scene_seed, **params):
         horizontal_faces = density.placement_mask(
             scale=0.15, normal_thresh=-0.4, normal_thresh_high=0.4
         )
-        coral_reef.apply(
+        # coral_reef.apply(
+        #     target,
+        #     selection=horizontal_faces,
+        #     n=5,
+        #     horizontal=True,
+        #     tag=underwater_domain,
+        #     density=params.get("horizontal_coral_density", 2.5),
+        # )
+        coral_reef.CoralReef().apply(
             target,
             selection=horizontal_faces,
             n=5,
@@ -585,7 +627,13 @@ def compose_nature(output_folder, scene_seed, **params):
 
     p.run_stage(
         "seaweed",
-        lambda: seaweed.apply(
+        # lambda: seaweed.apply(
+        #     terrain_inview,
+        #     selection=density.placement_mask(
+        #         scale=0.05, select_thresh=0.5, normal_thresh=0.4, tag=underwater_domain
+        #     ),
+        # ),
+        lambda: seaweed.Seaweed().apply(
             terrain_inview,
             selection=density.placement_mask(
                 scale=0.05, select_thresh=0.5, normal_thresh=0.4, tag=underwater_domain
@@ -594,7 +642,13 @@ def compose_nature(output_folder, scene_seed, **params):
     )
     p.run_stage(
         "urchin",
-        lambda: urchin.apply(
+        # lambda: urchin.apply(
+        #     terrain_inview,
+        #     selection=density.placement_mask(
+        #         scale=0.05, select_thresh=0.5, tag=underwater_domain
+        #     ),
+        # ),
+        lambda: urchin.Urchin().apply(
             terrain_inview,
             selection=density.placement_mask(
                 scale=0.05, select_thresh=0.5, tag=underwater_domain
@@ -603,7 +657,13 @@ def compose_nature(output_folder, scene_seed, **params):
     )
     p.run_stage(
         "jellyfish",
-        lambda: jellyfish.apply(
+        # lambda: jellyfish.apply(
+        #     terrain_inview,
+        #     selection=density.placement_mask(
+        #         scale=0.05, select_thresh=0.5, tag=underwater_domain
+        #     ),
+        # ),
+        lambda: jellyfish.Jellyfish().apply(
             terrain_inview,
             selection=density.placement_mask(
                 scale=0.05, select_thresh=0.5, tag=underwater_domain
@@ -613,7 +673,13 @@ def compose_nature(output_folder, scene_seed, **params):
 
     p.run_stage(
         "seashells",
-        lambda: seashells.apply(
+        # lambda: seashells.apply(
+        #     terrain_near,
+        #     selection=density.placement_mask(
+        #         scale=0.05, select_thresh=0.5, tag="landscape,", return_scalar=True
+        #     ),
+        # ),
+        lambda: seashells.Seashells().apply(
             terrain_near,
             selection=density.placement_mask(
                 scale=0.05, select_thresh=0.5, tag="landscape,", return_scalar=True
@@ -622,7 +688,13 @@ def compose_nature(output_folder, scene_seed, **params):
     )
     p.run_stage(
         "pinecone",
-        lambda: pinecone.apply(
+        # lambda: pinecone.apply(
+        #     terrain_near,
+        #     selection=density.placement_mask(
+        #         scale=0.1, select_thresh=0.63, tag=land_domain
+        #     ),
+        # ),
+        lambda: pinecone.Pinecone().apply(
             terrain_near,
             selection=density.placement_mask(
                 scale=0.1, select_thresh=0.63, tag=land_domain
@@ -631,7 +703,16 @@ def compose_nature(output_folder, scene_seed, **params):
     )
     p.run_stage(
         "pine_needle",
-        lambda: pine_needle.apply(
+        # lambda: pine_needle.apply(
+        #     terrain_near,
+        #     selection=density.placement_mask(
+        #         scale=uniform(0.05, 0.2),
+        #         select_thresh=uniform(0.4, 0.55),
+        #         tag=land_domain,
+        #         return_scalar=True,
+        #     ),
+        # ),
+        lambda: pine_needle.PineNeedle().apply(
             terrain_near,
             selection=density.placement_mask(
                 scale=uniform(0.05, 0.2),
@@ -643,7 +724,16 @@ def compose_nature(output_folder, scene_seed, **params):
     )
     p.run_stage(
         "decorative_plants",
-        lambda: decorative_plants.apply(
+        # lambda: decorative_plants.apply(
+        #     terrain_near,
+        #     selection=density.placement_mask(
+        #         scale=uniform(0.05, 0.2),
+        #         select_thresh=uniform(0.5, 0.65),
+        #         tag=land_domain,
+        #         return_scalar=True,
+        #     ),
+        # ),
+        lambda: decorative_plants.DecorativePlants().apply(
             terrain_near,
             selection=density.placement_mask(
                 scale=uniform(0.05, 0.2),

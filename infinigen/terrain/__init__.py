@@ -1,1 +1,1 @@
-from .core import Terrain, hidden_in_viewport
+from .core import Terrain

@@ -41,6 +41,7 @@ class Nodes:
     CompSeparateColor = "CompositorNodeSeparateColor"
     CombineRGB = "ShaderNodeCombineRGB"
     CombineColor = "ShaderNodeCombineColor"
+    FunctionCombineColor = "FunctionNodeCombineColor"
     CompCombineColor = "CompositorNodeCombineColor"
 
     # bl3.5 additions
@@ -103,6 +104,7 @@ class Nodes:
     ConvexHull = "GeometryNodeConvexHull"
     Raycast = "GeometryNodeRaycast"
     DuplicateElements = "GeometryNodeDuplicateElements"
+    Triangulate = "GeometryNodeTriangulate"
 
     # Input
     GroupInput = "NodeGroupInput"
@@ -388,7 +390,12 @@ PYTYPE_TO_DATATYPE = {
     np.array: "FLOAT_VECTOR",
     bool: "BOOLEAN",
 }
-DATATYPE_TO_PYTYPE = {v: k for k, v in PYTYPE_TO_DATATYPE.items()}
+DATATYPE_TO_PYTYPE = {
+    "INT": int,
+    "FLOAT": np.float32,
+    "FLOAT_VECTOR": np.float64,
+    "BOOLEAN": bool,
+}
 
 # Each thing containing nodes has a different output node id
 OUTPUT_NODE_IDS = {

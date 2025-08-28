@@ -38,11 +38,12 @@ python -m infinigen_examples.generate_indoors --seed 0 --task coarse --output_fo
 python -m infinigen_examples.generate_indoors --seed 0 --task coarse --output_folder outputs/indoors/coarse -g no_objects.gin overhead.gin -p compose_indoors.terrain_enabled=False
 
 # Single random room with objects, overhead view (~11min. runtime CPU only):
-python -m infinigen_examples.generate_indoors --seed 0 --task coarse --output_folder outputs/indoors/coarse -g fast_solve.gin overhead.gin singleroom.gin -p compose_indoors.terrain_enabled=False compose_indoors.overhead_cam_enabled=True restrict_solving.solve_max_rooms=1 compose_indoors.invisible_room_ceilings_enabled=True compose_indoors.restrict_single_supported_roomtype=True
+python -m infinigen_examples.generate_indoors --seed 0 --task coarse --output_folder outputs/indoors/coarse -g fast_solve.gin overhead.gin singleroom.gin -p compose_indoors.terrain_enabled=False restrict_solving.solve_max_rooms=1 compose_indoors.invisible_room_ceilings_enabled=True compose_indoors.restrict_single_supported_roomtype=True
 
-# Whole apartment with objects, overhead view:
-python -m infinigen_examples.generate_indoors --seed 0 --task coarse --output_folder outputs/indoors/coarse -g fast_solve.gin overhead.gin studio.gin -p compose_indoors.terrain_enabled=False
+# Whole home with objects, overhead view: # TODO - bring back studio.gin 3-house appartment, for speed
+python -m infinigen_examples.generate_indoors --seed 0 --task coarse --output_folder outputs/indoors/coarse -g fast_solve.gin overhead.gin -p compose_indoors.terrain_enabled=False
 ```
+Note: whole home solving with objects will take a long time. You can use parallel instances (manage_jobs) below to get more throughput. Reduced roomcount apartment variant coming soon.
 
 Once complete, you can inspect / fly around `outputs/indoors/coarse/scene.blend` in the blender UI:
 
@@ -58,10 +59,10 @@ Next, run the commands below to render an RGB image and ground truth:
 
 ```bash
 # Render RGB images
-python -m infinigen_examples.generate_nature --seed 0 --task render --input_folder outputs/indoors/coarse --output_folder outputs/indoors/frames
+python -m infinigen_examples.generate_indoors --seed 0 --task render --input_folder outputs/indoors/coarse --output_folder outputs/indoors/frames
 
 # Use blender to extract ground-truth (optional)
-python -m infinigen_examples.generate_nature --seed 0 --task render --input_folder outputs/indoors/coarse --output_folder outputs/indoors/frames -p render.render_image_func=@flat/render_image 
+python -m infinigen_examples.generate_indoors --seed 0 --task render --input_folder outputs/indoors/coarse --output_folder outputs/indoors/frames -p render.render_image_func=@flat/render_image 
 ```
 
 Once complete, you can open `outputs/indoors/frames` and navigate to view the results.
@@ -91,6 +92,37 @@ See [ConfiguringInfinigen.md](./ConfiguringInfinigen.md) for documentation on `m
 ## Developer Guide
 
 More documentation coming soon.
+
+### Dense room-mesh subdivision with OcMesher
+
+Infinigen-Indoors uses large polygons for walls/floors/ceilings by default, which have innaccurate ground truth for the surface normal / minute depth changes created by materials.
+
+To fix this, use `real_geometry_with_bump.gin` if you want fine mesh + displacements, or just `real_geometry.gin` if you want the subdivided mesh but no displacement.
+
+:warning: The current implementation of displacement for indoor materials is valid for `blender_gt` extracted with cycles. For OpenGL & any non-blender mesh exports, it will be densely subdivided but *will not have material displacements applied to the polygons*. This is because we use blender's efficient, but non-realized, "shader displacement". We have code to convert this to an exportable mesh (infinigen/tools/convert_displacement.py) but it is not yet integrated
+
+:warning: Most indoor object assets (e.g cabinets, doors) do not yet have a reliable strategy to create dense meshes. This means they are not safe to use with any displacement method besides `set_displacement_mode.displacement_mode = "NONE"` if you want material geometry to be reflected in ground truth. 
+
+```bash
+
+# install terrain
+git submodule update
+pip install -e .[terrain]
+
+python -m infinigen_examples.generate_indoors -- --output_folder outputs/indoors/coarse --seed 0 --task coarse -g forest singleroom real_geometry_with_bump -p compose_indoors.terrain_enabled=True restrict_solving.restrict_parent_rooms=\[\"DiningRoom\"\] compose_indoors.solve_small_enabled=False 
+```
+
+<p align="center">
+  <img src="images/hello_room/ocmesh_base.png" width="350" />
+  <img src="images/hello_room/ocmesh_facesize.png" width="350" />
+</p>
+
+Second image shows polygons via the following codeblock:
+```python
+from infinigen.assets.materials.dev import face_size_visualizer as f
+f.FaceSizeVisualizer().apply(list(bpy.data.objects))
+```
+
 
 ### Restricting the solver to certain rooms / objects
 
@@ -133,3 +165,11 @@ By default, between 15 and 25 objects are generated and have their size normaliz
 ```
 pytest tests/ --disable-warnings
 ```
+
+## Generate Rooms with Existing Floor Plan
+There are times when users would like to generate only the furniture placements given a predefined floor plan. Then the user may run the following command:
+```bash
+python -m infinigen_examples.generate_indoors --seed 0 --task coarse  --output_folder outputs/indoors_real/coarse -g singleroom.gin fast_solve.gin no_objects.gin -p compose_indoors.terrain_enabled=False Solver.floor_plan='infinigen_examples/configs_indoor/floor_plans/predefined.json'
+python -m infinigen_examples.generate_indoors --seed 0 --task coarse  --output_folder outputs/indoors_real/coarse -g singleroom.gin fast_solve.gin no_objects.gin -p compose_indoors.terrain_enabled=False Solver.floor_plan='infinigen_examples.configs_indoor.floor_plans.predefined.example'
+```
+Inside `predefined.json`, `predefined.py` or other similarly specified files, one can specify the rooms, windows, doors as well as open cutters, interior cutters and entrance cutters from their custom dataset. The naming of the room should follow current schema of `{room_type}_{room_level}/{room_id}`. Rooms are specified as a shapely Polygon, while others are specified as a shapely LineString, either as a shapely geometry or as its REPR string. Open cutters cut off an entire wall from top to bottom, while interior cutters cut off the wall and replace it with a window. The user can also creatively use these methods to build their own floor plan configuration, say, to expose one side of the room to the natural backdrop.   

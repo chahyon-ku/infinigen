@@ -20,11 +20,11 @@ import numpy as np
 
 from infinigen import repo_root
 from infinigen.assets import lighting
-from infinigen.assets.materials import invisible_to_camera
+from infinigen.assets.materials.dev import InvisibleToCamera
 from infinigen.assets.objects.wall_decorations.skirting_board import make_skirting_board
 from infinigen.assets.placement.floating_objects import FloatingObjectPlacement
 from infinigen.assets.utils.decorate import read_co
-from infinigen.core import execute_tasks, init, placement, surface, tagging
+from infinigen.core import execute_tasks, init, placement, tagging
 from infinigen.core import tags as t
 from infinigen.core.constraints import checks
 from infinigen.core.constraints import constraint_language as cl
@@ -36,28 +36,29 @@ from infinigen.core.constraints.example_solver import (
 )
 from infinigen.core.constraints.example_solver.room import decorate as room_dec
 from infinigen.core.constraints.example_solver.solve import Solver
-from infinigen.core.placement import camera as cam_util
+from infinigen.core.placement import camera_trajectories as cam_traj
 from infinigen.core.util import blender as butil
-from infinigen.core.util import pipeline
-from infinigen.core.util.camera import points_inview
+from infinigen.core.util import camera as cam_util
+from infinigen.core.util import ocmesher_utils, pipeline
 from infinigen.core.util.imu import save_imu_tum_files
 from infinigen.core.util.test_utils import (
     import_item,
     load_txt_list,
 )
 from infinigen.terrain import Terrain
+from infinigen.tools.convert_displacement import convert_shader_displacement
 from infinigen_examples.constraints import home as home_constraints
-
-from . import (
-    generate_nature,  # noqa F401 # needed for nature gin configs to load  # noqa F401 # needed for nature gin configs to load
-)
-from .constraints import util as cu
-from .util.generate_indoors_util import (
+from infinigen_examples.constraints import util as cu
+from infinigen_examples.util.generate_indoors_util import (
     apply_greedy_restriction,
     create_outdoor_backdrop,
     hide_other_rooms,
     place_cam_overhead,
     restrict_solving,
+)
+
+from . import (
+    generate_nature,  # noqa: F401 # needed for nature gin configs to be loaded
 )
 
 logger = logging.getLogger(__name__)
@@ -140,7 +141,6 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
     def add_coarse_terrain():
         terrain = Terrain(
             scene_seed,
-            surface.registry,
             task="coarse",
             on_the_fly_asset_folder=output_folder / "assets",
         )
@@ -231,12 +231,13 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
 
     camera_rigs = placement.camera.spawn_camera_rigs()
 
-    def pose_cameras():
-        nonroom_objs = [
-            o.obj for o in state.objs.values() if t.Semantics.Room not in o.tags
-        ]
-        scene_objs = solved_rooms + nonroom_objs
+    nonroom_objs = [
+        o.obj for o in state.objs.values() if t.Semantics.Room not in o.tags
+    ]
+    room_objs = [o.obj for o in state.objs.values() if t.Semantics.Room in o.tags]
+    scene_objs = solved_rooms + nonroom_objs
 
+    def pose_cameras():
         scene_preprocessed = placement.camera.camera_selection_preprocessing(
             terrain=None, scene_objs=scene_objs
         )
@@ -248,25 +249,27 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
             ]
         )
 
-        placement.camera.configure_cameras(
-            camera_rigs,
+        poses = cam_traj.compute_poses(
+            cam_rigs=camera_rigs,
             scene_preprocessed=scene_preprocessed,
             init_surfaces=solved_floor_surface,
             nonroom_objs=nonroom_objs,
-            terrain_coverage_range=None,  # do not filter cameras by terrain visibility, even if nature scenetype configs request this
         )
-        butil.delete(solved_floor_surface)
-        return scene_preprocessed
 
-    scene_preprocessed = p.run_stage("pose_cameras", pose_cameras, use_chance=False)
+        butil.delete(solved_floor_surface)
+
+        return poses, scene_preprocessed
+
+    poses, scene_preprocessed = p.run_stage(
+        "pose_cameras", pose_cameras, use_chance=False, default=(None, None)
+    )
 
     def animate_cameras():
-        cam_util.animate_cameras(
-            camera_rigs,
-            solved_bbox,
-            scene_preprocessed,
-            pois=[],
-            terrain_coverage_range=None,  # same as above - do not filter by terrain visiblity when indoors
+        cam_traj.animate_trajectories(
+            cam_rigs=camera_rigs,
+            base_views=poses,
+            scene_preprocessed=scene_preprocessed,
+            obj_groups=[room_objs, nonroom_objs],
         )
 
         frames_folder = output_folder.parent / "frames"
@@ -364,6 +367,19 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
     )
 
     rooms_meshed = butil.get_collection("placeholders:room_meshes")
+
+    if overrides.get("enable_ocmesh_room", False):
+        rooms_ocmeshed = []
+        cameras = [cam for camera_rig in camera_rigs for cam in camera_rig.children]
+        for room_meshed in rooms_meshed.objects:
+            room_ocmeshed = ocmesher_utils.run_ocmesher(room_meshed, cameras)
+            rooms_ocmeshed.append(room_ocmeshed)
+
+        butil.group_in_collection(rooms_ocmeshed, "placeholders:room_ocmeshes")
+        rooms_meshed = butil.get_collection("placeholders:room_ocmeshes")
+        for mesh in rooms_meshed.objects:
+            convert_shader_displacement(mesh)
+
     rooms_split = room_dec.split_rooms(list(rooms_meshed.objects))
 
     p.run_stage(
@@ -405,6 +421,7 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
     p.run_stage("lights_off", turn_off_lights)
 
     def invisible_room_ceilings():
+        invisible_to_camera = InvisibleToCamera()
         rooms_split["exterior"].hide_viewport = True
         rooms_split["exterior"].hide_render = True
         invisible_to_camera.apply(list(rooms_split["ceiling"].objects))
@@ -479,7 +496,7 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
                 cam_dist * np.cos(rot_x),
             )
             bpy.context.view_layer.update()
-            inview = points_inview(bbox, camera)
+            inview = cam_util.points_inview(bbox, camera)
             if inview.all():
                 for area in bpy.context.screen.areas:
                     if area.type == "VIEW_3D":

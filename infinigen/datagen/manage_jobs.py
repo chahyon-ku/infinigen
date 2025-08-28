@@ -68,6 +68,7 @@ wandb = None  # will be imported and initialized ONLY if installed and enabled
 
 # used only if enabled in gin configs
 PARTITION_ENVVAR = "INFINIGEN_SLURMPARTITION"
+ACCOUNT_ENVVAR = "INFINIGEN_SLURMACCOUNT"
 EXCLUDE_FILE_ENVVAR = "INFINIGEN_SLURM_EXCLUDENODES_LIST"
 NUM_CONCURRENT_ENVVAR = "INFINIGEN_NUMCONCURRENT_TARGET"
 
@@ -142,12 +143,10 @@ def slurm_submit_cmd(
         executor.update_parameters(gpus_per_node=gpus)
 
     if slurm_account is not None:
-        if slurm_account == f"ENVVAR_{PARTITION_ENVVAR}":
-            slurm_account = os.environ.get(PARTITION_ENVVAR)
+        if slurm_account == f"ENVVAR_{ACCOUNT_ENVVAR}":
+            slurm_account = os.environ.get(ACCOUNT_ENVVAR)
             if slurm_account is None:
-                logger.warning(
-                    f"{PARTITION_ENVVAR=} was not set, using no slurm account"
-                )
+                logger.warning(f"{ACCOUNT_ENVVAR=} was not set, using no slurm account")
 
         if isinstance(slurm_account, list):
             slurm_account = np.random.choice(slurm_account)
@@ -160,7 +159,15 @@ def slurm_submit_cmd(
         slurm_additional_params["nice"] = slurm_niceness
 
     if slurm_partition is not None:
-        slurm_additional_params["partition"] = slurm_partition
+        if slurm_partition == f"ENVVAR_{PARTITION_ENVVAR}":
+            slurm_partition = os.environ.get(PARTITION_ENVVAR)
+            if slurm_partition is None:
+                logger.warning(
+                    f"{PARTITION_ENVVAR=} was not set, using no slurm partition"
+                )
+
+        if slurm_partition is not None:
+            executor.update_parameters(slurm_partition=slurm_partition)
 
     if slurm_nodelist is not None:
         slurm_additional_params["nodelist"] = slurm_nodelist
@@ -693,7 +700,7 @@ def manage_datagen_jobs(
 
     # Dont launch new scenes if disk is getting full
     if control_state["disk_usage"] > disk_sleep_threshold:
-        message = f"{args.output_folder} is full ({100*control_state['disk_usage']}%). Sleeping."
+        message = f"{args.output_folder} is full ({100 * control_state['disk_usage']}%). Sleeping."
         print(message)
         if wandb is not None:
             wandb.alert(
@@ -728,7 +735,7 @@ def print_stats_block(
     now = datetime.now()
 
     print(
-        f'{args.output_folder} {start_time.strftime("%m/%d %I:%M%p")} -> {now.strftime("%m/%d %I:%M%p")}'
+        f"{args.output_folder} {start_time.strftime('%m/%d %I:%M%p')} -> {now.strftime('%m/%d %I:%M%p')}"
     )
     print("=" * 60)
     for k, v in sorted(log_stats.items()):
@@ -784,6 +791,13 @@ def main(args, shuffle=True, wandb_project="render", upload_commandfile_method=N
 
     start_time = datetime.now()
     while any(j["all_done"] == SceneState.NotDone for j in all_scenes):
+        now = datetime.now()
+
+        if args.print_stats:
+            print(
+                f"{args.output_folder} {start_time.strftime('%m/%d %I:%M%p')} -> {now.strftime('%m/%d %I:%M%p')}"
+            )
+
         log_stats = manage_datagen_jobs(
             all_scenes, elapsed=(datetime.now() - start_time).total_seconds()
         )
@@ -899,9 +913,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "-v", "--verbose", action="store_const", dest="loglevel", const=logging.INFO
     )
+    parser.add_argument("--print_stats", type=int, default=1)
     args = parser.parse_args()
 
-    using_upload = any("upload" in x for x in args.pipeline_configs)
+    using_upload = any(
+        "upload" in x
+        for x in args.pipeline_configs
+        if args.pipeline_configs is not None
+    )
 
     if not using_upload and args.cleanup in ["except_logs", "except_crashed", "all"]:
         raise ValueError(
@@ -917,13 +936,17 @@ if __name__ == "__main__":
     assert args.specific_seed is None or args.num_scenes == 1
 
     if args.output_folder is None:
-        date_str = datetime.now().strftime("%y-%m-%d_%H-%M")
+        date_str = datetime.now().strftime("%y-%m-%d_%H-%M-%S")
         hostname = os.uname().nodename
 
         output_base = Path("outputs")
         assert output_base.exists(), output_base
 
         args.output_folder = Path(f"outputs/{date_str}_{hostname}")
+    elif os.environ.get("SLURM_ARRAY_TASK_ID") is not None:
+        args.output_folder = Path(
+            (str(args.output_folder) + "_" + str(os.environ["SLURM_ARRAY_TASK_ID"]))
+        )
 
     overwrite_ok = args.use_existing or args.overwrite
     if args.output_folder.exists() and not overwrite_ok:

@@ -3,7 +3,7 @@
 
 // Authors: Zeyu Ma
 
-
+#include <cmath>
 #include <assert.h>
 using namespace std;
 #define DEVICE_FUNC

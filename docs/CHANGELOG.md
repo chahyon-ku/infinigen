@@ -192,3 +192,52 @@ v1.12.2
 v1.12.3
 - Fix populate_collection missing argument 'cameras'
 - Fix split_in_view crash for dist_max=None
+
+
+v1.13.0
+- Refactor materials into classes
+- Separate test lists for new-style and deprecated apply()-style materials
+
+v1.13.1
+- Refactor transpiler, fix transpiling disabled input sockets
+
+v1.13.2
+- Bugfix invalid Brick kwargs and `1-2 args execution context is supported` during indoor room generation
+
+
+v1.14.0
+- Add option to densely subdivide room meshes using OcMesher
+- Add RRT-Star camera pathfinding for video viewpoint animation
+
+v1.15.0
+- Initial code release for Infinigen-Sim! See ExportingToSimulators.md for guide on generating articulated doors, toasters, lamps, fridges, & dishwashers. Added articulation exporters to USD, MJCF, URDF.
+
+v1.15.1
+- Fix occlusion boundaries when polygons project to negative z in camera space
+
+v1.15.2
+- Fix house ocmesher camera crash
+- Add house ocmesher example command, warnings and example images
+- Update face_size_visualizer
+- Standardize use of set_displacement_mode
+
+v1.15.4
+- fix empty material slot crash in blendergt
+- fix empty material slot crash in export glass materials #442
+- fix displacement not properly disabled when requested 443
+- fix mvs cameras undefined variable #437
+- fix crash in overhead run_stage #439
+- disable optimize_disk_usage unless requested
+- attempted to fix pypi
+- fix missing studio.gin #417 by @jerrylingjiemei
+
+v1.15.5
+- Fix mismatched USD textures due to unhandled slashes in object names
+
+v1.16.0
+- Refactored scatters into classes
+- Change blender_gt surface normals convention from world coordinates to camera coordinates.
+- Allow user specification of floor plans as a series of shapely primitives.
+
+v1.17.0
+- Adding dynamics to sim exporters and adding new articulated assets.

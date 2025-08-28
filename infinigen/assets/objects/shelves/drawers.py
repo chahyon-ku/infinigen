@@ -1,21 +1,15 @@
 # Copyright (C) 2024, Princeton University.
 # This source code is licensed under the BSD 3-Clause license found in the LICENSE file in the root directory of this source tree.
 
-# Authors: Beining Han
+# Authors:
+# - Beining Han: primary author
+# - Abhishek Joshi: Edits for sim
 
 import bpy
 import numpy as np
 from numpy.random import uniform
 
-from infinigen.assets.materials import metal
-from infinigen.assets.materials.shelf_shaders import (
-    shader_shelves_black_wood,
-    shader_shelves_black_wood_sampler,
-    shader_shelves_white,
-    shader_shelves_white_sampler,
-    shader_shelves_wood,
-    shader_shelves_wood_sampler,
-)
+from infinigen.assets.materials.wood.plywood import get_shelf_material
 from infinigen.core import surface
 from infinigen.core.nodes import node_utils
 from infinigen.core.nodes.node_wrangler import Nodes, NodeWrangler
@@ -595,7 +589,7 @@ def geometry_nodes(nw: NodeWrangler, **kwargs):
         Nodes.SetMaterial,
         input_kwargs={
             "Geometry": join_geometry,
-            "Material": surface.shaderfunc_to_material(kwargs["frame_material"]),
+            "Material": kwargs["drawer_material"],
         },
     )
 
@@ -647,52 +641,21 @@ class CabinetDrawerBaseFactory(AssetFactory):
         if params.get("knob_length", None) is None:
             params["knob_length"] = uniform(0.018, 0.035)
 
-        if params.get("frame_material", None) is None:
-            params["frame_material"] = np.random.choice(
+        if params.get("drawer_material", None) is None:
+            params["drawer_material"] = np.random.choice(
                 ["white", "black_wood", "wood"], p=[0.5, 0.2, 0.3]
             )
         if params.get("knob_material", None) is None:
             params["knob_material"] = np.random.choice(
-                [params["frame_material"], "metal"], p=[0.5, 0.5]
+                [params["drawer_material"], "metal"], p=[0.5, 0.5]
             )
 
         params = self.get_material_func(params)
         return params
 
     def get_material_func(self, params, randomness=True):
-        white_wood_params = shader_shelves_white_sampler()
-        black_wood_params = shader_shelves_black_wood_sampler()
-        normal_wood_params = shader_shelves_wood_sampler()
-        if params["frame_material"] == "white":
-            if randomness:
-                params["frame_material"] = lambda x: shader_shelves_white(
-                    x, **white_wood_params
-                )
-            else:
-                params["frame_material"] = shader_shelves_white
-        elif params["frame_material"] == "black_wood":
-            if randomness:
-                params["frame_material"] = lambda x: shader_shelves_black_wood(
-                    x, **black_wood_params, z_axis_texture=True
-                )
-            else:
-                params["frame_material"] = lambda x: shader_shelves_black_wood(
-                    x, z_axis_texture=True
-                )
-        elif params["frame_material"] == "wood":
-            if randomness:
-                params["frame_material"] = lambda x: shader_shelves_wood(
-                    x, **normal_wood_params, z_axis_texture=True
-                )
-            else:
-                params["frame_material"] = lambda x: shader_shelves_wood(
-                    x, z_axis_texture=True
-                )
-
-        if params["knob_material"] == "metal":
-            params["knob_material"] = metal.get_shader()
-        else:
-            params["knob_material"] = params["frame_material"]
+        params["drawer_material"] = get_shelf_material(params["drawer_material"])
+        params["knob_material"] = get_shelf_material(params["knob_material"])
 
         return params
 

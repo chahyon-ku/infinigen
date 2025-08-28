@@ -12,13 +12,14 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Literal
 
 import bpy
 import gin
 import numpy as np
 from imageio import imwrite
 
-from infinigen.core import init, surface
+from infinigen.core import init
 from infinigen.core.nodes.node_wrangler import Nodes, NodeWrangler
 from infinigen.core.placement import camera as cam_util
 from infinigen.core.rendering.post_render import (
@@ -32,7 +33,7 @@ from infinigen.core.rendering.post_render import (
     load_seg_mask,
     load_uniq_inst,
 )
-from infinigen.core.util import blender as butil
+from infinigen.core.util.blender import set_geometry_option
 from infinigen.core.util.logging import Timer
 from infinigen.tools.datarelease_toolkit import reorganize_old_framesfolder
 from infinigen.tools.suffixes import get_suffix
@@ -239,47 +240,100 @@ def shader_random(nw: NodeWrangler):
     )
 
 
+def _replace_shader_with_randcolor(material: bpy.types.Material):
+    nt = material.node_tree
+    if nt is None:
+        return
+    logger.debug(f"Replacing shader with randcolor for {material.name}")
+    nodes = nt.nodes
+    object_info = nodes.new(type="ShaderNodeObjectInfo")
+    white_noise_texture = nodes.new(type="ShaderNodeTexWhiteNoise")
+    material_output = nodes["Material Output"]
+    nt.links.new(object_info.outputs["Random"], white_noise_texture.inputs["Vector"])
+    nt.links.new(
+        white_noise_texture.outputs["Color"], material_output.inputs["Surface"]
+    )
+
+
+def _remove_volume_shading(material: bpy.types.Material):
+    nt = material.node_tree
+    if nt is None:
+        return
+    nw = NodeWrangler(nt)
+    for output in nw.find(Nodes.MaterialOutput):
+        if "Volume" not in output.inputs:
+            continue
+        vol_socket = output.inputs["Volume"]
+        if len(vol_socket.links) > 0:
+            nw.links.remove(vol_socket.links[0])
+
+
+def _replace_materials_with_flat_shading(obj: bpy.types.Object):
+    for i in range(len(obj.material_slots)):
+        if obj.material_slots[i] is None or obj.material_slots[i].material is None:
+            logger.debug(
+                f"Skipping {obj.name} with empty material slot {i}/{len(obj.material_slots)}"
+            )
+            continue
+        try:
+            _replace_shader_with_randcolor(obj.material_slots[i].material)
+        except Exception as e:
+            mat = obj.material_slots[i].material
+            raise RuntimeError(
+                f"Error in blendergt flat_shading {_replace_shader_with_randcolor.__name__} for "
+                f"{obj.name} with material slot {i} {mat.name}: {e}"
+            )
+
+
 def global_flat_shading():
+    # Remove all volumes in the scene as they cause noisy depth
     for obj in bpy.context.scene.view_layers["ViewLayer"].objects:
         if "fire_system_type" in obj and obj["fire_system_type"] == "volume":
             continue
         if obj.name.lower() in {"atmosphere", "atmosphere_fine"}:
             bpy.data.objects.remove(obj)
-        elif obj.active_material is not None:
-            nw = obj.active_material.node_tree
-            for node in nw.nodes:
-                if node.bl_idname == Nodes.MaterialOutput:
-                    vol_socket = node.inputs["Volume"]
-                    if len(vol_socket.links) > 0:
-                        nw.links.remove(vol_socket.links[0])
+            continue
+        if obj.active_material is None:
+            continue
+        try:
+            _remove_volume_shading(obj.active_material)
+        except Exception as e:
+            mat = obj.active_material
+            raise RuntimeError(
+                f"Error in blendergt flat_shading {_remove_volume_shading.__name__} for "
+                f"{obj.name} with material {mat.name}: {e}"
+            )
+
     bpy.context.view_layer.update()
 
+    # Get rid of all nondiffuse materials. e.g. glass becomes solid, or else we get noisy depth (as of bl3.6 at least)
     for obj in bpy.context.scene.view_layers["ViewLayer"].objects:
         if obj.type != "MESH":
+            logger.debug(
+                f"{global_flat_shading.__name__} skipping {obj.name} with non-MESH type {obj.type}"
+            )
             continue
         obj.hide_viewport = False
         if "fire_system_type" in obj and obj["fire_system_type"] == "gt_mesh":
             obj.hide_viewport = False
             obj.hide_render = False
-        if not hasattr(obj, "material_slots"):
-            print(obj.name, "NONE")
+        if (
+            not hasattr(obj, "material_slots")
+            or obj.material_slots is None
+            or len(obj.material_slots) == 0
+        ):
+            logger.debug(
+                f"{global_flat_shading.__name__} skipping {obj.name} with no material slots"
+            )
             continue
-        with butil.SelectObjects(obj):
-            for i in range(len(obj.material_slots)):
-                bpy.ops.object.material_slot_remove()
-
-    for obj in bpy.context.scene.view_layers["ViewLayer"].objects:
-        surface.add_material(obj, shader_random)
-    for mat in bpy.data.materials:
-        nw = NodeWrangler(mat.node_tree)
-        shader_random(nw)
+        _replace_materials_with_flat_shading(obj)
 
     nw = NodeWrangler(bpy.data.worlds["World"].node_tree)
     for link in nw.links:
         nw.links.remove(link)
 
 
-def postprocess_blendergt_outputs(frames_folder, output_stem):
+def postprocess_blendergt_outputs(frames_folder, output_stem, camera):
     # Save flow visualization
     flow_dst_path = frames_folder / f"Vector{output_stem}.exr"
     flow_array = load_flow(flow_dst_path)
@@ -295,7 +349,7 @@ def postprocess_blendergt_outputs(frames_folder, output_stem):
 
     # Save surface normal visualization
     normal_dst_path = frames_folder / f"Normal{output_stem}.exr"
-    normal_array = load_normals(normal_dst_path)
+    normal_array = load_normals(normal_dst_path, camera)
     np.save(flow_dst_path.with_name(f"SurfaceNormal{output_stem}.npy"), normal_array)
     imwrite(
         flow_dst_path.with_name(f"SurfaceNormal{output_stem}.png"),
@@ -385,6 +439,37 @@ def configure_compositor(
     )
 
 
+def _unlink_material_displacement_output(material: bpy.types.Material):
+    if material.node_tree is None:
+        return
+    nw = NodeWrangler(material.node_tree)
+    material_outputs = nw.find(Nodes.MaterialOutput)
+    for output_node in material_outputs:
+        if "Displacement" not in output_node.inputs:
+            continue
+        displacement_input = output_node.inputs["Displacement"]
+        for link in displacement_input.links:
+            logger.debug(
+                f"{_unlink_material_displacement_output.__name__} removing {link} to {output_node.name} in {material.name}"
+            )
+            nw.links.remove(link)
+
+
+@gin.configurable
+def set_displacement_mode(
+    displacement_mode: Literal["DISPLACEMENT", "BUMP", "BOTH", "NONE"] = "DISPLACEMENT",
+):
+    match displacement_mode:
+        case "NONE":
+            for material in bpy.data.materials:
+                _unlink_material_displacement_output(material)
+        case "DISPLACEMENT" | "BUMP" | "BOTH":
+            for material in bpy.data.materials:
+                set_geometry_option(material, displacement_mode)
+        case _:
+            raise ValueError(f"Invalid displacement mode: {displacement_mode}")
+
+
 @gin.configurable
 def render_image(
     camera: bpy.types.Object,
@@ -403,6 +488,7 @@ def render_image(
         bpy.data.objects[exclude].hide_render = True
 
     init.configure_cycles_devices()
+    set_displacement_mode()
 
     tmp_dir = frames_folder.parent.resolve() / "tmp"
     tmp_dir.mkdir(exist_ok=True)
@@ -480,7 +566,7 @@ def render_image(
             if flat_shading:
                 bpy.context.scene.frame_set(frame)
                 suffix = get_suffix(dict(frame=frame, **indices))
-                postprocess_blendergt_outputs(frames_folder, suffix)
+                postprocess_blendergt_outputs(frames_folder, suffix, camera)
             else:
                 cam_util.save_camera_parameters(
                     camera,

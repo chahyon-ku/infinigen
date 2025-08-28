@@ -16,11 +16,9 @@ infinigen.assets.materials.glass
 infinigen.assets.materials.grained_and_polished_metal
 infinigen.assets.materials.hammered_metal
 infinigen.assets.materials.hardwood_floor
-infinigen.assets.materials.leather
 infinigen.assets.materials.lined_fabric
 infinigen.assets.materials.marble_regular
 infinigen.assets.materials.marble_voronoi
-infinigen.assets.materials.metal_basic
 infinigen.assets.materials.metal.metal_basic
 infinigen.assets.materials.mirror
 infinigen.assets.materials.plaster

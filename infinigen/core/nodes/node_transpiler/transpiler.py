@@ -5,23 +5,25 @@
 # - Alexander Raistrick: primary author
 # - Alejandro Newell, Lingjie Mei: bugfixes
 
-
 import importlib
 import keyword
 import logging
 import re
+import runpy
 from collections import OrderedDict
+from pathlib import Path
 
 import bpy
 import mathutils
 import numpy as np
 
+from infinigen.assets.sim_objects import mapping
 from infinigen.core.nodes.node_info import OUTPUT_NODE_IDS, SINGLETON_NODES, Nodes
 from infinigen.core.nodes.node_wrangler import ng_inputs
 
 logger = logging.getLogger(__name__)
 
-VERSION = "2.6.5"
+VERSION = "2.7.1"
 indent_string = " " * 4
 LINE_LEN = 100
 
@@ -110,12 +112,17 @@ def indent(s):
 def prefix(dependencies_used) -> str:
     fixed_prefix = (
         "import bpy\n"
+        "import gin\n"
         "import mathutils\n"
         "from numpy.random import uniform, normal, randint\n"
         "from infinigen.core.nodes.node_wrangler import Nodes, NodeWrangler\n"
         "from infinigen.core.nodes import node_utils\n"
-        "from infinigen.core.util.color import color_category\n"
         "from infinigen.core import surface\n"
+        "from infinigen.core.placement.factory import AssetFactory\n"
+        "from infinigen.core.util import blender as butil\n"
+        "from infinigen.core.sim.exporters import factory\n"
+        "from infinigen.core.util.random import weighted_sample\n"
+        "from infinigen.assets.composition import material_assignments\n"
     )
 
     deps_table = [
@@ -134,13 +141,13 @@ def prefix(dependencies_used) -> str:
 
 
 def postfix(funcnames, targets):
-    header = "def apply(obj, selection=None, **kwargs):\n"
+    header = "def apply(obj, selection=None, apply=False, **kwargs):\n"
     body = ""
 
     for funcname, target in zip(funcnames, targets):
         idname = get_node_tree(target).bl_idname
         if idname == "GeometryNodeTree":
-            body += f"surface.add_geomod(obj, {funcname}, selection=selection, attributes=[])\n"
+            body += f"surface.add_geomod(obj, {funcname}, apply=apply, selection=selection, attributes=[], **kwargs)\n"
         elif idname == "ShaderNodeTree":
             body += f"surface.add_material(obj, {funcname}, selection=selection)\n"
         else:
@@ -149,6 +156,16 @@ def postfix(funcnames, targets):
             )
 
     return header + indent(body)
+
+
+def repr_iter_val(v):
+    match v:
+        case list():
+            return represent_list(v)
+        case str():
+            return v  # String are assumed to be code variables to get passed through
+        case _:
+            return represent_default_value(v, simple=True)
 
 
 def represent_default_value(val, simple=True):
@@ -161,39 +178,42 @@ def represent_default_value(val, simple=True):
     code = ""
     new_transpiler_targets = {}
 
-    if isinstance(
-        val,
-        (str, int, bool, bpy.types.Object, bpy.types.Collection, set, bpy.types.Image),
-    ):
-        code = repr(val)
-    elif isinstance(val, (float)):
-        code = f"{val:.4f}"
-    elif isinstance(
-        val, (tuple, bpy.types.bpy_prop_array, mathutils.Vector, mathutils.Euler)
-    ):
-        code = represent_tuple(tuple(val))
-    elif isinstance(val, bpy.types.Collection):
-        logger.warning(
-            f"Encountered collection {repr(val.name)} as a default_value - please edit the code to remove this dependency on a collection already existing"
-        )
-        code = f"bpy.data.collections[{repr(val.name)}]"
-    elif isinstance(val, bpy.types.Material):
-        if val.use_nodes:
-            funcname = get_func_name(val)
-            new_transpiler_targets[funcname] = val
-            code = f"surface.shaderfunc_to_material({funcname})"
-        else:
-            logger.warning(f"Encountered material {val} but it has use_nodes=False")
+    match val:
+        case str() | int() | bool() | set():
             code = repr(val)
-    elif val is None:
-        logger.warning(
-            "Transpiler introduced a None into result script, this may not have been intended by the user"
-        )
-        code = "None"
-    else:
-        raise ValueError(
-            f"represent_default_value was unable to handle {val=} with type {type(val)}, please contact the developer"
-        )
+        case float():
+            code = f"{val:.4f}"
+        case (
+            tuple()
+            | bpy.types.bpy_prop_array()
+            | mathutils.Vector()
+            | mathutils.Euler()
+        ):
+            code = represent_tuple(tuple(val))
+        case bpy.types.Object() | bpy.types.Image():
+            code = repr(val)
+        case bpy.types.Collection():
+            logger.warning(
+                f"Encountered collection {repr(val.name)} as a default_value - please edit the code to remove this dependency on a collection already existing"
+            )
+            code = f"bpy.data.collections[{repr(val.name)}]"
+        case bpy.types.Material():
+            if val.use_nodes:
+                funcname = get_func_name(val)
+                new_transpiler_targets[funcname] = val
+                code = f"surface.shaderfunc_to_material({funcname})"
+            else:
+                logger.warning(f"Encountered material {val} but it has use_nodes=False")
+                code = repr(val)
+        case None:
+            logger.warning(
+                "Transpiler introduced a None into result script, this may not have been intended by the user"
+            )
+            code = "None"
+        case _:
+            raise ValueError(
+                f"represent_default_value was unable to handle {val=} with type {type(val)}, please contact the developer"
+            )
 
     assert isinstance(code, str)
 
@@ -297,7 +317,6 @@ def represent_label_value_expression(expression):
     Valid operations:
     - U, uniform
     - N, normal
-    - color, color_category
 
     Valid arguments: str, float, list of float
 
@@ -368,13 +387,6 @@ def represent_label_value_expression(expression):
         }[op]
         args = ", ".join(repr(a) for a in args)
         return f"{funcname}({args})"
-
-    elif op in ["color", "color_category"]:
-        if not len(args) == 1:
-            raise ValueError(
-                f"In {expression=}, expected 1 argument, got {len(args)} instead"
-            )
-        return f"color_category({repr(args[0])})"
     else:
         raise ValueError(
             f"Failed to represent_label_value_expression({expression=}), unrecognized {op=}"
@@ -461,15 +473,83 @@ def create_attrs_dict(node_tree, node):
     }
 
 
-def create_inputs_dict(node_tree, node, memo):
+def process_single_input(node_tree, node, input_socket, input_name, memo):
     """
-    Produce some `code` that instantiates all node INPUTS to `node`,
-    as well as a python dict `inputs_dict` containing all the variable
-    names that should be used to refer to each of the inputs we instantiated
+    Process a single input socket and return either:
+    - None if the input should be skipped
+    - (input_expression, code, new_targets) tuple if the input should be included
     """
+    if not input_socket.enabled:
+        return None
 
+    links = get_connected_link(node_tree, input_socket)
+    if links is None:
+        if not hasattr(input_socket, "default_value"):
+            return None
+        if not has_default_value_changed(node_tree, node, input_socket):
+            return None
+        input_expression, targets = represent_default_value(
+            input_socket.default_value, simple=False
+        )
+        return (input_expression, "", targets)
+
+    # Process all valid links to this input
+    all_expressions = []
+    all_code = []
+    all_targets = {}
+
+    for link in links:
+        if not link.from_socket.enabled or not link.to_socket.enabled:
+            logger.warning(
+                f"Transpiler encountered {'from' if not link.from_socket.enabled else 'to'} disabled socket "
+                f"{link.from_socket if not link.from_socket.enabled else link.to_socket}, ignoring it"
+            )
+            continue
+
+        input_varname, input_code, targets = create_node(
+            node_tree, link.from_node, memo
+        )
+        all_code.append(input_code)
+        all_targets.update(targets)
+
+        if len(link.from_node.outputs) == 1:
+            input_expression = input_varname
+        else:
+            socket_name = link.from_socket.name
+            input_expression = f'{input_varname}.outputs["{socket_name}"]'
+
+            # Catch shared socket output names
+            if (
+                link.from_node.outputs[socket_name].identifier
+                != link.from_socket.identifier
+            ):
+                from_idx = [
+                    i
+                    for i, o in enumerate(link.from_node.outputs)
+                    if o.identifier == link.from_socket.identifier
+                ][0]
+                input_expression = f"{input_varname}.outputs[{from_idx}]"
+
+        all_expressions.append(input_expression)
+
+    if not all_expressions:
+        return None
+
+    return (
+        all_expressions[0] if len(all_expressions) == 1 else all_expressions,
+        "".join(all_code),
+        all_targets,
+    )
+
+
+def combine_input_results(node, processed_inputs):
+    """
+    Combine the results of processing multiple inputs into the final inputs_dict and code.
+    processed_inputs is a list of (idx, name, result) tuples where result is either None or (expr, code, targets)
+    """
     inputs_dict = {}
-    code = ""
+    all_code = []
+    all_targets = {}
 
     def update_inputs(i, k, v):
         is_input_name_unique = [socket.name for socket in node.inputs].count(k) == 1
@@ -481,69 +561,29 @@ def create_inputs_dict(node_tree, node, memo):
                 inputs_dict[k] = [inputs_dict[k]]
             inputs_dict[k].append(v)
 
-    new_transpile_targets = {}
-    for i, (input_name, input_socket) in enumerate(node.inputs.items()):
-        links = get_connected_link(node_tree, input_socket)
-
-        if links is None:
-            if hasattr(input_socket, "default_value"):
-                if not has_default_value_changed(node_tree, node, input_socket):
-                    continue
-                input_expression, targets = represent_default_value(
-                    input_socket.default_value, simple=False
-                )
-                new_transpile_targets.update(targets)
-                update_inputs(i, input_name, input_expression)
+    for i, input_name, result in processed_inputs:
+        if result is None:
             continue
+        input_expression, code, targets = result
+        update_inputs(i, input_name, input_expression)
+        if code:
+            all_code.append(code)
+        all_targets.update(targets)
 
-        for link in links:
-            if not link.from_socket.enabled:
-                logger.warning(
-                    f"Transpiler encountered link from disabled socket {link.from_socket}, ignoring it"
-                )
-                continue
-            if not link.to_socket.enabled:
-                logger.warning(
-                    f"Transpiler encountered link to disabled socket {link.to_socket}, ignoring it"
-                )
-                continue
-
-            input_varname, input_code, targets = create_node(
-                node_tree, link.from_node, memo
-            )
-            code += input_code
-            new_transpile_targets.update(targets)
-
-            if len(link.from_node.outputs) == 1:
-                input_expression = input_varname
-            else:
-                socket_name = link.from_socket.name
-                input_expression = f'{input_varname}.outputs["{socket_name}"]'
-
-                # Catch shared socket output names
-                if (
-                    link.from_node.outputs[socket_name].identifier
-                    != link.from_socket.identifier
-                ):
-                    from_idx = [
-                        i
-                        for i, o in enumerate(link.from_node.outputs)
-                        if o.identifier == link.from_socket.identifier
-                    ][0]
-                    input_expression = f"{input_varname}.outputs[{from_idx}]"
-
-            update_inputs(i, input_name, input_expression)
-
-    return inputs_dict, code, new_transpile_targets
+    return inputs_dict, "".join(all_code), all_targets
 
 
-def repr_iter_val(v):
-    if isinstance(v, list):
-        return represent_list(v)
-    elif isinstance(v, str):
-        return v  # String are assumed to be code variables to get passed through
-    else:
-        return represent_default_value(v, simple=True)
+def create_inputs_dict(node_tree, node, memo):
+    """
+    Process all inputs of a node and return a dict mapping input names to their values,
+    along with any generated code and new transpile targets.
+    """
+    processed = []
+    for i, (input_name, input_socket) in enumerate(node.inputs.items()):
+        result = process_single_input(node_tree, node, input_socket, input_name, memo)
+        processed.append((i, input_name, result))
+
+    return combine_input_results(node, processed)
 
 
 def represent_list(inputs, spacing=" "):
@@ -810,7 +850,11 @@ def transpile(orig_targets, module_dependencies=[]):
 
         # create function definition
         new_code = ""
-        if hasattr(target, "bl_idname") and target.bl_idname.endswith("NodeGroup"):
+        if (
+            hasattr(target, "bl_idname")
+            and target.bl_idname.endswith("NodeGroup")
+            or funcname == "geometry_nodes"
+        ):
             new_code += f"@node_utils.to_nodegroup({repr(funcname)}, singleton=False, type={repr(get_node_tree(target).bl_idname)})\n"
         new_code += f"def {funcname}(nw: NodeWrangler):\n"
 
@@ -836,6 +880,176 @@ def transpile(orig_targets, module_dependencies=[]):
                 targets[k] = (v, False)  # mark as needing to be transpiled
 
     return code, orig_names, available_dependencies
+
+
+def clean_and_capitalize(input_string):
+    """
+    Upper cases the first letter of the string and uppercases
+    the character after '.', '-', or '_' while removing these
+    special characters from the string.
+    """
+    # Uppercase the character after ., -, or _
+    cleaned_string = re.sub(
+        r"[._-](\w)", lambda match: match.group(1).upper(), input_string
+    )
+    # Remove all special characters except alphanumerics
+    cleaned_string = re.sub(r"[^A-Za-z0-9\s]", "", cleaned_string)
+    # Capitalize the first character
+    if cleaned_string:
+        result = cleaned_string[0].upper() + cleaned_string[1:]
+    else:
+        result = cleaned_string  # Handle empty string case
+    return result
+
+
+def add_asset_to_file(file_path, asset_name, class_name, import_path):
+    with open(file_path, "r") as file:
+        lines = file.readlines()
+
+    mapping = runpy.run_path(file_path)
+    obj_class_map = mapping.get("OBJECT_CLASS_MAP", {})
+    if asset_name in obj_class_map:
+        logging.warning(
+            f"The asset name '{asset_name}' already exists in OBJECT_CLASS_MAP."
+        )
+        return
+
+    new_import = f"from {import_path}.{asset_name} import {class_name}\n"
+    new_dict_entry = f'    "{asset_name}": {class_name},\n'
+
+    updated_lines = []
+    import_added = False
+    dict_entry_added = False
+    inside_object_map = False
+
+    for line in lines:
+        # Handle import insertion
+        if "# add newly transpiled assets here" in line and not import_added:
+            updated_lines.append(new_import)
+            import_added = True
+
+        updated_lines.append(line)
+
+        # Handle dictionary insertion
+        if "OBJECT_CLASS_MAP" in line:
+            inside_object_map = True
+
+        if (
+            inside_object_map
+            and "# add newly transpiled assets here" in line
+            and not dict_entry_added
+        ):
+            updated_lines.insert(
+                len(updated_lines) - 1, new_dict_entry
+            )  # Insert before the comment
+            dict_entry_added = True
+            inside_object_map = False  # Reset after adding
+
+    # Write the updated content back
+    with open(file_path, "w") as file:
+        file.writelines(updated_lines)
+
+
+def extract_joint_labels(code_str):
+    pattern = r"'Joint Label'\s*:\s*'([^']*)'"
+    return re.findall(pattern, code_str)
+
+
+def build_joint_sampler(code_str):
+    labels = set(extract_joint_labels(code_str))
+    result = "{\n"
+    for label in labels:
+        replaced_label = label.replace(" ", "_")
+        result += f'\t\t\t"{label}": {{\n'
+        result += f'\t\t\t\t"stiffness": uniform({replaced_label}_stiffness_min, {replaced_label}_stiffness_max),\n'
+        result += f'\t\t\t\t"damping": uniform({replaced_label}_damping_min, {replaced_label}_damping_max)\n'
+        result += f"\t\t\t}},\n"  # noqa
+    result += "\t\t}"
+    return result
+
+
+def build_joint_params(code_str):
+    labels = set(extract_joint_labels(code_str))
+    lines = []
+    for label in labels:
+        label = label.replace(" ", "_")
+        for attr in ("stiffness", "damping"):
+            for bound in ("min", "max"):
+                lines.append(f"{label}_{attr}_{bound}: float = 0.0,")
+    if not lines:
+        return ""
+    # first line unindented, subsequent lines indented
+    formatted = [lines[0]] + ["        " + line for line in lines[1:]]
+    return "\n".join(formatted)
+
+
+def transpile_object_to_sim_class(
+    obj,
+    module_dependencies=[],
+    output_name=None,
+    add_to_catalog=True,
+):
+    targets = []
+    targets += [mod for mod in obj.modifiers if mod.type == "NODES"]
+    logging.info(
+        f"Found {len(targets)} initial transpile targets for object {repr(obj)}"
+    )
+
+    func_code, funcnames, dependencies_used = transpile(targets, module_dependencies)
+
+    joint_param_str = build_joint_params(func_code)
+    joint_sampler_str = build_joint_sampler(func_code)
+
+    code = prefix(dependencies_used) + "\n\n"
+    code += func_code + "\n\n"
+    # code += postfix(funcnames, targets)
+    # code += "\n\n"
+    output_name = obj.name if output_name is None else output_name
+    class_name = clean_and_capitalize(output_name) + "Factory"
+    code += f"""
+class {class_name}(AssetFactory):
+
+    def __init__(self, factory_seed=None, coarse=False):
+        super().__init__(factory_seed=factory_seed, coarse=False)
+
+    @classmethod
+    @gin.configurable(module='{class_name}')
+    def sample_joint_parameters(
+        cls,
+        {joint_param_str}
+    ):
+        return {joint_sampler_str}
+
+    def sample_parameters(self):
+        # add code here to randomly sample from parameters
+        return {"{}"}
+
+    def create_asset(self,
+                     asset_params=None,
+                     **kwargs):
+        obj = butil.spawn_vert()
+        butil.modify_mesh(
+            obj,
+            "NODES",
+            apply=False,
+            node_group={funcnames[0]}(),
+            ng_inputs=self.sample_parameters()
+        )
+
+        return obj
+    """
+
+    if add_to_catalog:
+        mapping_path = Path(mapping.__file__)
+        add_asset_to_file(
+            file_path=mapping_path,
+            asset_name=output_name,
+            class_name=class_name,
+            import_path="infinigen.assets.sim_objects",
+        )
+
+    logging.info("")  # newline once done for ease of reading the logs
+    return code
 
 
 def transpile_object(obj, module_dependencies=[]):
