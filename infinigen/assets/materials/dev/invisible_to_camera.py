@@ -43,10 +43,10 @@ class InvisibleToCamera:
         if not isinstance(obj, list):
             obj = [obj]
 
-        for o in obj:
-            bpy.context.view_layer.objects.active = o
-            o.select_set(True)
-            for i in range(len(o.material_slots)):
-                # bpy.ops.object.material_slot_remove({"object": o})
-                bpy.ops.object.material_slot_remove()
-        surface.add_material(obj, shader_invisible, selection=selection)
+            for o in obj:
+                bpy.context.view_layer.objects.active = o
+                o.select_set(True)
+                for i in range(len(o.material_slots)):
+                    # bpy.ops.object.material_slot_remove({"object": o})
+                    bpy.ops.object.material_slot_remove()
+            surface.add_material(obj, shader_invisible, selection=selection)
