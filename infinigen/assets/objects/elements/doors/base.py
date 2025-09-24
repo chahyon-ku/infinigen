@@ -33,6 +33,7 @@ from infinigen.core.util import blender as butil
 from infinigen.core.util.bevelling import add_bevel, get_bevel_edges
 from infinigen.core.util.math import FixedSeed
 from infinigen.core.util.random import log_uniform, weighted_sample
+from scripts.usd_articulated_asset_exporter import export_articulated_door
 
 from .bar_handle import nodegroup_push_bar_handle
 from .joint_utils import (
@@ -926,7 +927,6 @@ class BaseDoorFactory(AssetFactory):
                 self.surface.apply([door_frame, door])
                 self.glass_surface.apply(door_arc, clear=True)
             else:
-                breakpoint()
                 raise NotImplementedError
         else:
             self.surface.apply([door_frame, door])
@@ -983,6 +983,11 @@ class BaseDoorFactory(AssetFactory):
                 "door_orientation": self.door_orientation,
             },
         )
+
+        # Make adeep copy of the door object and give it to the .usd exporter to copy all of the modifiers and generate an identical articulated door.
+        copydoor = door_joined.copy()
+        copydoor.data = door_joined.data.copy()
+        export_articulated_door(copydoor)
 
         if apply:
             butil.apply_modifiers(door_joined, geometry_node_join.__name__)

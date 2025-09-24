@@ -7,25 +7,24 @@ import gin
 import numpy as np
 from numpy.random import uniform
 
-from infinigen.assets.objects.elements.doors.lite import LiteDoorFactory
-from infinigen.assets.objects.elements.doors.louver import LouverDoorFactory
-from infinigen.assets.objects.elements.doors.panel import (
-    GlassPanelDoorFactory,
-    PanelDoorFactory,
-)
 from infinigen.core.placement.factory import AssetFactory
 from infinigen.core.util.math import FixedSeed
 
 
 def random_door_factory():
+    from infinigen.assets.objects.elements.doors.panel import PanelDoorFactory
     door_factories = [
         PanelDoorFactory,
-        GlassPanelDoorFactory,
-        LouverDoorFactory,
-        LiteDoorFactory,
+        # TODO(anton): -- some of the import were causing issues so I just removed them... we need to bring them back in order to preserve the ability to just generate any random door .usd asset in the future.
+        # GlassPanelDoorFactory,
+        # LouverDoorFactory,
+        # LiteDoorFactory,
     ]
-    door_probs = np.array([4, 2, 3, 3])
-    return np.random.choice(door_factories, p=door_probs / door_probs.sum())
+    # This should be getting a random door factory from a random class so bring it back here.
+    # door_probs = np.array([4, 2, 3, 3])
+    # return np.random.choice(door_factories, p=door_probs / door_probs.sum())
+
+    return PanelDoorFactory
 
 
 class SimDoorFactory(AssetFactory):
@@ -63,6 +62,10 @@ class SimDoorFactory(AssetFactory):
         }
 
     def create_asset(self, **params) -> bpy.types.Object:
+        # We are generating an articulated door, this means we should not spawn a new object, but rather make the passed-in door object articulated.
+        if 'door' in params:
+            door = params['door']
+            return door
         return self.base_factory.create_asset(apply=False, **params)
 
     def finalize_assets(self, assets):

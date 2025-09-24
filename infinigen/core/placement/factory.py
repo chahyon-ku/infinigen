@@ -157,6 +157,7 @@ class AssetFactory:
             else:
                 obj.hide_render = False
         else:
+            # TODO(anton): -- This might be the place where we set the location. Though I think it gets reset to 0,0,0 somewhere later along the way anyways. But this would be the point to start the investigation.
             obj.parent = None
             obj.location = placeholder.location
             obj.rotation_euler = placeholder.rotation_euler
