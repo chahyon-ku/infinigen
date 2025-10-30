@@ -367,6 +367,10 @@ def compose_indoors(output_folder: Path, scene_seed: int, **overrides):
     )
 
     rooms_meshed = butil.get_collection("placeholders:room_meshes")
+    # close all doors
+    for o in bpy.data.objects:
+        if "door" in o.name.lower():
+            o.rotation_euler.z = 0.0
 
     if overrides.get("enable_ocmesh_room", False):
         rooms_ocmeshed = []

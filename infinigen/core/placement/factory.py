@@ -148,7 +148,10 @@ class AssetFactory:
                 obj, export_path, semantic_mapping = obj
                 assert export_path
 
-        obj.name = f"{repr(self)}.spawn_asset({i})"
+        articulated_idx = ""
+        if "_articulateddooridx_" in obj.name:
+            articulated_idx = "artdoor_"+obj.name.split("_")[-1]
+        obj.name = f"{repr(self)}.spawn_asset({i})" + articulated_idx
 
         if user_provided_placeholder:
             if obj is not placeholder:

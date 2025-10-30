@@ -987,7 +987,8 @@ class BaseDoorFactory(AssetFactory):
         # Make adeep copy of the door object and give it to the .usd exporter to copy all of the modifiers and generate an identical articulated door.
         copydoor = door_joined.copy()
         copydoor.data = door_joined.data.copy()
-        export_articulated_door(copydoor)
+        articulated_name = export_articulated_door(copydoor)
+        door_joined.name = door_joined.name+"_articulateddooridx_"+str(articulated_name)
 
         if apply:
             butil.apply_modifiers(door_joined, geometry_node_join.__name__)

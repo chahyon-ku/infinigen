@@ -12,7 +12,12 @@ def export_articulated_door(door_obj):
     export_format = 'usd'
     export_dir = './sim_exports'
     doors_dir = "/".join([export_dir, export_format, asset_type_name])
-    next_idx = max([int(i) for i in os.listdir(doors_dir)])
+
+    next_idx = 1001
+    current_doors = [int(i) for i in os.listdir(doors_dir)]
+    if len(current_doors) > 0:
+        next_idx = max(current_doors) + 1
+
     export_path, semantic_mapping = sf.spawn_simready(
         name=asset_type_name,
         seed=next_idx,
@@ -23,3 +28,4 @@ def export_articulated_door(door_obj):
     )
 
     #print(f"Exported to {export_path.resolve()}")
+    return next_idx
