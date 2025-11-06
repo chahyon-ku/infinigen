@@ -33,7 +33,6 @@ from infinigen.core.util import blender as butil
 from infinigen.core.util.bevelling import add_bevel, get_bevel_edges
 from infinigen.core.util.math import FixedSeed
 from infinigen.core.util.random import log_uniform, weighted_sample
-from scripts.usd_articulated_asset_exporter import export_articulated_door
 
 from .bar_handle import nodegroup_push_bar_handle
 from .joint_utils import (
@@ -985,9 +984,10 @@ class BaseDoorFactory(AssetFactory):
         )
 
         # Make adeep copy of the door object and give it to the .usd exporter to copy all of the modifiers and generate an identical articulated door.
+        from scripts.usd_articulated_asset_exporter import export_articulated_asset
         copydoor = door_joined.copy()
         copydoor.data = door_joined.data.copy()
-        articulated_name = export_articulated_door(copydoor)
+        articulated_name = export_articulated_asset(copydoor, "door")
         door_joined.name = door_joined.name+"_articulateddooridx_"+str(articulated_name)
 
         if apply:

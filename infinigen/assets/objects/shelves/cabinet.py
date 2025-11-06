@@ -1728,20 +1728,32 @@ class CabinetBaseFactory(AssetFactory):
         return shelf, right_door, left_door
 
     def create_asset(self, i=0, **params):
-        bpy.ops.mesh.primitive_plane_add(
-            size=1,
-            enter_editmode=False,
-            align="WORLD",
-            location=(0, 0, 0),
-            scale=(1, 1, 1),
-        )
-        obj = bpy.context.active_object
+        #i=6324106
+        #breakpoint()
+        obj, shelf, right_door, left_door, cabinet_params = None, None, None, None, None
+        if "existing_asset" not in params or not params["copy_from_existing"]:
+            bpy.ops.mesh.primitive_plane_add(
+                size=1,
+                enter_editmode=False,
+                align="WORLD",
+                location=(0, 0, 0),
+                scale=(1, 1, 1),
+            )
+            obj = bpy.context.active_object
 
-        shelf, right_door, left_door = self.get_cabinet_components(i=i)
+            shelf, right_door, left_door = self.get_cabinet_components(i=i)
 
-        # create cabinet
-        cabinet_params = self.get_cabinet_params(i=i)
+            # create cabinet
+            cabinet_params = self.get_cabinet_params(i=i)
+        else:
+            #breakpoint()
+            left_door = params["cabinet_parts"]["left_door"]
+            right_door = params["cabinet_parts"]["right_door"]
+            obj = params["existing_asset"]
+            shelf = params["cabinet_parts"]["shelf"]
+            cabinet_params = params["cabinet_parts"]["cabinet_params"]
 
+        #breakpoint()
         surface.add_geomod(
             obj,
             geometry_cabinet_nodes,
@@ -1755,6 +1767,15 @@ class CabinetBaseFactory(AssetFactory):
             },
         )
         butil.delete([shelf, left_door, right_door])
+
+        #breakpoint()
+        #from scripts.usd_articulated_asset_exporter import export_articulated_asset
+        #copycabinet = obj.copy()
+        #copycabinet.data = obj.data.copy()
+        #articulated_name = export_articulated_asset(copycabinet, "cabinet")
+        #obj.name = obj.name+"_articulatedcabinet_"+str(articulated_name)
+        #breakpoint()
+        #breakpoint()
 
         return obj
 

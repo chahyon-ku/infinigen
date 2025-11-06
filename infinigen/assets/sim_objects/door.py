@@ -63,8 +63,8 @@ class SimDoorFactory(AssetFactory):
 
     def create_asset(self, **params) -> bpy.types.Object:
         # We are generating an articulated door, this means we should not spawn a new object, but rather make the passed-in door object articulated.
-        if 'door' in params:
-            door = params['door']
+        if 'existing_asset' in params:
+            door = params['existing_asset']
             return door
         return self.base_factory.create_asset(apply=False, **params)
 

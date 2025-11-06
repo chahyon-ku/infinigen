@@ -283,7 +283,7 @@ def select(objs: bpy.types.Object | list[bpy.types.Object]):
         objs = [objs]
     for o in objs:
         # TODO(anton): -- This should be guarded by a flag that gets propagated via kwargs or something, but for now will do.
-        if "SimDoorFactory" in o.name:
+        if "SimDoorFactory" in o.name or "cabinet" in o.name.lower():
             C = bpy.context
             if o.name not in bpy.context.scene.objects:
                 C.collection.objects.link(o)

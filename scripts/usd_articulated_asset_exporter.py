@@ -3,12 +3,9 @@ import pprint
 from pathlib import Path
 import os
 
-import gin
-
 from infinigen.core.sim import sim_factory as sf
 
-def export_articulated_door(door_obj):
-    asset_type_name = 'door'
+def export_articulated_asset(existing_obj, asset_type_name, cabinet_params=None, copy_from_existing=True):
     export_format = 'usd'
     export_dir = './sim_exports'
     doors_dir = "/".join([export_dir, export_format, asset_type_name])
@@ -24,7 +21,9 @@ def export_articulated_door(door_obj):
         exporter=export_format,
         export_dir=Path(export_dir),
         visual_only=True,
-        door=door_obj,
+        existing_asset=existing_obj,
+        cabinet_parts=cabinet_params,
+        copy_from_existing=copy_from_existing,
     )
 
     #print(f"Exported to {export_path.resolve()}")
