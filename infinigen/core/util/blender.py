@@ -282,6 +282,11 @@ def select(objs: bpy.types.Object | list[bpy.types.Object]):
     if not isinstance(objs, list):
         objs = [objs]
     for o in objs:
+        # TODO(anton): -- This should be guarded by a flag that gets propagated via kwargs or something, but for now will do.
+        if "SimDoorFactory" in o.name or "cabinet" in o.name.lower():
+            C = bpy.context
+            if o.name not in bpy.context.scene.objects:
+                C.collection.objects.link(o)
         if o.name not in bpy.context.scene.objects:
             raise ValueError(f"Object {o.name=} not in scene and cant be selected")
         o.select_set(True)

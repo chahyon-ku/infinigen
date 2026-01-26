@@ -148,7 +148,12 @@ class AssetFactory:
                 obj, export_path, semantic_mapping = obj
                 assert export_path
 
-        obj.name = f"{repr(self)}.spawn_asset({i})"
+        articulated_idx = ""
+        if "_articulateddooridx_" in obj.name:
+            articulated_idx = "artdoor_"+obj.name.split("_")[-1]
+        elif "_articulatedcabinet_" in obj.name:
+            articulated_idx = "artcab_"+obj.name.split("_")[-1]
+        obj.name = f"{repr(self)}.spawn_asset({i})" + articulated_idx
 
         if user_provided_placeholder:
             if obj is not placeholder:
@@ -157,6 +162,7 @@ class AssetFactory:
             else:
                 obj.hide_render = False
         else:
+            # TODO(anton): -- This might be the place where we set the location. Though I think it gets reset to 0,0,0 somewhere later along the way anyways. But this would be the point to start the investigation.
             obj.parent = None
             obj.location = placeholder.location
             obj.rotation_euler = placeholder.rotation_euler

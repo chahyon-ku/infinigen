@@ -381,6 +381,7 @@ def populate_doors(
                     rot_z = uniform(0, 1)
             rot_z *= np.pi / 2
 
+            # this is where we generate the door and place it
             door = factory(int(j))
             door.parent = placeholders[j]
             door.location = (

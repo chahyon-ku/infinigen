@@ -255,11 +255,35 @@ class SingleCabinetBaseFactory(AssetFactory):
             scale=(1, 1, 1),
         )
         obj = bpy.context.active_object
+        #breakpoint()
 
         shelf, right_door, left_door = self.get_cabinet_components(i=i)
 
         # create cabinet
         cabinet_params = self.get_cabinet_params(i=i)
+
+        # before object is compiled into a single thing without modifiers, export parts of it to generate articulated cabinet
+        #copyobj = obj.copy()
+        #obj.data = obj.data.copy()
+
+        #copyshelf = shelf.copy()
+        #shelf.data = shelf.data.copy()
+
+        #copyrightdoor = right_door.copy()
+        #copyrightdoor.data = right_door.data.copy()
+
+        #copyleftdoor = left_door.copy()
+        #copyleftdoor.data = left_door.data.copy()
+
+        #params["shelf"] = copyshelf
+        #params["right_door"] = copyrightdoor
+        #params["left_door"] = copyleftdoor
+        #params["cabinet_params"] = cabinet_params
+
+        #from scripts.usd_articulated_asset_exporter import export_articulated_asset
+        #articulated_name = export_articulated_asset(copyobj, "cabinet", params, copy_from_existing=False)
+        #######################################
+
         surface.add_geomod(
             obj,
             geometry_cabinet_nodes,
@@ -286,6 +310,12 @@ class SingleCabinetBaseFactory(AssetFactory):
             butil.delete([left_door])
 
         tagging.tag_system.relabel_obj(obj)
+
+        #breakpoint()
+        #obj.name = obj.name+"_articulatedcabinetidx_"+str(articulated_name)
+        from scripts.usd_articulated_asset_exporter import export_articulated_asset
+        articulated_name = export_articulated_asset(None, "cabinet", params, copy_from_existing=False)
+
         return obj
     
     def get_all_params(self):
