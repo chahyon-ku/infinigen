@@ -154,7 +154,7 @@ def split_glass_mats():
         mat = match.material_slots[0].material
         if mat is None:
             continue
-        if "shader_glass" in mat.name or "shader_lamp_bulb" in mat.name:
+        if "shader_glass" in mat.name or "shader_lamp_bulb" in mat.name or "shader_black" in mat.name:
             match.name = f"{match.name}_SPLIT_GLASS"
 
 
@@ -702,10 +702,11 @@ def adjust_wattages():
             if hasattr(light, "energy") and hasattr(light, "shadow_soft_size"):
                 X = light.energy
                 r = light.shadow_soft_size
+                if r != 0:
+                    new_wattage = ((X * 20 / (4 * math.pi)) * 1000 / (4 * math.pi * r**2) * 100)
+                else:
+                    new_wattage= X
                 # candelas * 1000 / (4 * math.pi * r**2). additionally units come out of blender at 1/100 scale
-                new_wattage = (
-                    (X * 20 / (4 * math.pi)) * 1000 / (4 * math.pi * r**2) * 100
-                )
                 # light.energy = new_wattage
                 light.energy = new_wattage / 100
                 # light.energy = new_wattage / 1000
