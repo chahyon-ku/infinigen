@@ -42,6 +42,39 @@ python -m infinigen_examples.generate_indoors --seed 0 --task coarse --output_fo
 python -m infinigen.tools.export --input_folder outputs/indoors/coarse --output_folder outputs/my_export -f usdc -r 1024 --omniverse
 ```
 
+#### Articulated assets in whole-house scenes (doors today)
+
+When `--omniverse` is set, the exporter detects objects tagged with articulation
+metadata (currently doors), removes their static geometry from the baked scene
+USD, and writes `articulated_assets.json` next to the scene USD. That JSON lists
+each instance's final world pose and the absolute path to its standalone
+articulated USD twin (joints/drives/axes), already written under
+`./sim_exports/usd/door/<idx>/door.usda` during scene generation.
+
+Run the composer to inject those assets back into the scene USD as USD reference
+Xforms at their recorded world poses:
+
+```bash
+python scripts/usd_articulated_scene_composer.py \
+    --scene-usd outputs/my_export/export_scene.blend/export_scene.usdc \
+    --articulated-json outputs/my_export/export_scene.blend/articulated_assets.json
+```
+
+By default the composer **bundles** each per-asset USD (and its `assets/` folder
+of textures) into `<scene_usd_dir>/articulated_assets/<kind>_<idx>/` and uses
+relative references in the scene USD, making the scene directory self-contained.
+You can copy the whole `export_scene.blend/` directory to another machine
+(e.g. an IsaacSim container at `/workspace/.../scenes/my_scene/`) and the
+references resolve locally without any path rewriting.
+
+Pass `--no-bundle` if you'd rather keep absolute references to the original
+`sim_exports/usd/...` location (faster, no copy, but only works on the same
+filesystem). The composer is idempotent — re-running clears the existing
+`/World/Articulated` subtree before composing.
+
+After composition, IsaacSim sees doors at their correct in-scene poses with full
+articulation.
+
 Download IsaacSim from [NVIDIA Omniverse](https://developer.nvidia.com/isaac/sim) and set up an IsaacSim conda environment by running the following commands in your IsaacSim Directory (typically ` ~/.local/share/ov/pkg/isaac_sim-2023.1.1`) 
 
 ```bash

@@ -1090,11 +1090,34 @@ class BaseDoorFactory(AssetFactory):
             },
         )
 
-        # Make adeep copy of the door object and give it to the .usd exporter to copy all of the modifiers and generate an identical articulated door.
+        # Export a standalone articulated USD twin of this door at origin, then tag
+        # the in-scene door with the asset's index + absolute path. The whole-scene
+        # USD exporter (infinigen.tools.export) reads these tags during the Omniverse
+        # path to drop the door's static geometry and emit a sidecar JSON of world
+        # poses; scripts/usd_articulated_scene_composer.py consumes the JSON and the
+        # scene USD to inject Xforms+references at the recorded poses.
+        from pathlib import Path as _Path
+
         from scripts.usd_articulated_asset_exporter import export_articulated_asset
+        # Snapshot scene objects so we can purge anything spawn_simready leaves behind.
+        # spawn_simready runs SimDoorFactory.spawn_asset(existing_asset=copydoor), which
+        # routes through AssetFactory.spawn_asset and renames copydoor to
+        # `SimDoorFactory(<idx>).spawn_asset(0)`. Without cleanup, copydoor (and any
+        # helper objects the sim factory created) survives in the .blend at origin and
+        # gets baked into the whole-house USD as duplicate static geometry, masking
+        # the articulated reference inserted later by the composer.
+        _objs_before = {o.as_pointer() for o in bpy.data.objects}
         copydoor = door_joined.copy()
         copydoor.data = door_joined.data.copy()
         articulated_name = export_articulated_asset(copydoor, "door")
+        for _new in [o for o in bpy.data.objects if o.as_pointer() not in _objs_before]:
+            bpy.data.objects.remove(_new, do_unlink=True)
+        asset_usd_path = (
+            _Path("./sim_exports/usd/door") / str(articulated_name) / "door.usda"
+        ).resolve()
+        door_joined["sim_articulated_kind"] = "door"
+        door_joined["sim_articulated_idx"] = int(articulated_name)
+        door_joined["sim_articulated_usd_path"] = str(asset_usd_path)
         door_joined.name = door_joined.name+"_articulateddooridx_"+str(articulated_name)
 
         if apply:

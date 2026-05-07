@@ -586,8 +586,12 @@ class USDBuilder(SimBuilder):
         translation = mathutils.Vector(-exputils.get_aabb_center(asset))
         vertices = [list(vertex.co + translation) for vertex in asset.data.vertices]
         faces = [list(triangle.vertices) for triangle in asset.data.loop_triangles]
+        # `facenum` is one entry per FACE (each value being that face's vertex count),
+        # not one entry per face-vertex. Capture before flattening so we don't size it
+        # by len(flattened) — that bug produces faceVertexCounts of length 3*nFaces and
+        # causes "numVerts and verts are inconsistent" errors at load time.
+        facenum = [3] * len(faces)
         faces = list(itertools.chain.from_iterable(faces))
-        facenum = [3 for _ in range(len(faces))]
         return vertices, faces, facenum, labels, asset
 
 

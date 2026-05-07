@@ -211,6 +211,58 @@ def remove_obj_parents(obj=None):
         obj.matrix_world.translation = old_location
 
 
+def extract_articulated_assets(output_folder: Path):
+    """Capture world poses of articulated objects (those tagged by their factory with
+    a `sim_articulated_kind` custom property) into `articulated_assets.json` and remove
+    them from the scene so they aren't baked into the whole-house USD as static
+    geometry.
+
+    The companion script `scripts/usd_articulated_scene_composer.py` consumes the JSON
+    plus the per-asset articulated USDs (written separately by the factory at scene
+    generation time) to inject reference Xforms back into the exported scene USD.
+
+    Must run after `remove_obj_parents()` so `obj.matrix_world` reflects the final
+    world pose, and before `apply_all_modifiers()` (which would destroy joint metadata
+    on the source objects — though the per-asset USD has already captured it).
+    """
+    import json
+
+    records = []
+    for obj in list(bpy.data.objects):
+        kind = obj.get("sim_articulated_kind")
+        if kind is None:
+            continue
+        asset_usd_path = obj.get("sim_articulated_usd_path")
+        if not asset_usd_path:
+            logging.warning(
+                f"{obj.name} tagged sim_articulated_kind={kind} but has no "
+                "sim_articulated_usd_path; skipping articulated reference."
+            )
+            continue
+        m = obj.matrix_world
+        # Row-major flat list of Blender's matrix_world (row i = m[i]). The composer
+        # transposes this into USD's row-vector convention.
+        world_matrix = [m[i][j] for i in range(4) for j in range(4)]
+        records.append({
+            "name": obj.name,
+            "kind": kind,
+            "idx": obj.get("sim_articulated_idx"),
+            "asset_usd_path": asset_usd_path,
+            "world_matrix": world_matrix,
+        })
+        bpy.data.objects.remove(obj, do_unlink=True)
+
+    if not records:
+        return
+
+    out = output_folder / "articulated_assets.json"
+    out.write_text(json.dumps(records, indent=2))
+    logging.info(
+        f"Captured {len(records)} articulated assets to {out}; "
+        "static geometry removed from scene to be replaced by USD references."
+    )
+
+
 def delete_objects():
     logging.info("Deleting placeholders collection")
     collection_name = "placeholders"
@@ -1154,6 +1206,8 @@ def export_curr_scene(
 
     remove_obj_parents()
     delete_objects()
+    if omniverse_export:
+        extract_articulated_assets(export_folder)
     triangulate_meshes()
     if omniverse_export:
         split_glass_mats()

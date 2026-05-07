@@ -11,7 +11,9 @@ def export_articulated_asset(existing_obj, asset_type_name, cabinet_params=None,
     doors_dir = "/".join([export_dir, export_format, asset_type_name])
 
     next_idx = 1001
-    current_doors = [int(i) for i in os.listdir(doors_dir)]
+    current_doors = []
+    if os.path.exists(doors_dir):
+        current_doors = [int(i) for i in os.listdir(doors_dir)]
     if len(current_doors) > 0:
         next_idx = max(current_doors) + 1
 
